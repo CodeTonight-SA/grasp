@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grasp-provenance"
+version = "0.1.0"
+description = "GRASP — Governed Reasoning And Signable Provenance. Reference implementation of cryptographic causation for AI: signed decision records (IDR), a signed memory/belief chain, a deterministic citation-provenance floor (cite.verify), and a signed legal filing gate."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "CodeTonight SA" }]
+keywords = [
+  "provenance",
+  "ai-audit",
+  "merkle",
+  "tamper-evident",
+  "citation-verification",
+  "decision-records",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Legal Industry",
+  "License :: OSI Approved :: GNU Affero General Public License v3",
+  "Operating System :: POSIX",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Security :: Cryptography",
+]
+
+[project.urls]
+Homepage = "https://github.com/CodeTonight-SA/grasp"
+
+[project.scripts]
+grasp-prove-it = "grasp.prove_it:main"
+grasp-legal-receipt = "grasp.legal_receipt:main"
+
+[tool.setuptools]
+packages = ["grasp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
