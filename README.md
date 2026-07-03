@@ -1,5 +1,9 @@
 # GRASP — Governed Reasoning And Signable Provenance
 
+[![CI](https://github.com/CodeTonight-SA/grasp/actions/workflows/ci.yml/badge.svg)](https://github.com/CodeTonight-SA/grasp/actions/workflows/ci.yml)
+
+**Try it in your browser:** <https://grasp-web-chi.vercel.app>
+
 **Reference implementation of cryptographic causation for AI systems.**
 
 When an AI makes a decision that matters, three questions decide whether anyone
