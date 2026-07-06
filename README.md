@@ -74,11 +74,11 @@ checkable on any explorer:
 
 - Pilot decision chain — committed via an OpenTimestamps proof to block
   **953968**: <https://mempool.space/block/953968>
-- Post-quantum FF pilot (Ed25519 + ML-DSA-65) — anchored in block **954244**
-  (<https://mempool.space/block/954244>), re-anchored with a newer root at
-  block **954655** (<https://mempool.space/block/954655>)
+- Post-quantum finance pilot (Ed25519 + ML-DSA-65) — dual-signed and anchored
+  via the same OpenTimestamps path; its anchor block details are shared in
+  evaluation materials on request rather than listed here.
 
-Check them yourself — that is the point. To be precise about what this means:
+Check it yourself — that is the point. To be precise about what this means:
 those anchors witness *pilot deployments* of the approach; this package does
 not anchor anything to Bitcoin on install. Anchoring is a deployment step you
 add on top (commit `forest_merkle_root(...)` via OpenTimestamps or the
