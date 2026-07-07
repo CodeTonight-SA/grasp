@@ -150,6 +150,25 @@ bundled: external timestamping/Bitcoin anchoring (a deployment step, as above),
 asymmetric/post-quantum key custody (an integration path), and any L2
 LLM-based support checking (caller-side, fail-open by design).
 
+## Verify a receipt (without trusting us)
+
+Every GRASP receipt can be re-checked with one command and nothing but Python's
+standard library — no GRIP runtime, no network, no account:
+
+```
+python3 tools/grasp-verify-receipt SPEC.json RECEIPT.json --root .
+```
+
+It re-hashes the deliverable and every pinned source, re-reads each citation
+quote at its recorded offsets (verbatim for `verified`; whitespace-only
+tolerance for `fuzzy`; `not_found` always fails), and recomputes the tally. Any
+tampered byte, shifted offset, or missing quote exits 1, loudly. The script is
+~200 readable lines — audit it in one sitting, or write your own from the spec:
+the JavaScript and Python verifiers byte-agree on shared vectors, so you never
+have to trust a single implementation. Bitcoin anchors verify through the
+upstream OpenTimestamps client (`pip install opentimestamps-client && ots
+verify <proof>.ots`) — not our code at all.
+
 ## Licence
 
 **AGPL-3.0-only** (see `LICENSE`). A provenance floor earns trust only if the

@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""grasp-verify-receipt — independently re-verify a GRASP claims receipt.
+
+Answers the AGORA council's deferred suggestion on the Sentient application
+set (PR #3880): give a skeptic ONE command that re-checks a
+grasp-legal-receipt against its spec, its pinned sources, and its
+deliverable — no GRIP runtime, no network, Python stdlib only.
+
+Checks (all deterministic; any failure prints and exits 1):
+  1. DELIVERABLE  re-hash the deliverable file (SHA-256); must equal
+                  receipt.deliverable.sha256.
+  2. SOURCES      re-hash + re-measure every source file named in the spec;
+                  must equal receipt.sources[id].sha256 / .chars.
+  3. CITATIONS    the spec's quote must sit at the receipt's [start, end)
+                  offsets in the source text — byte-identical for status
+                  'verified'; whitespace-normalised for 'fuzzy'; a
+                  'not_found' status always fails the receipt.
+  4. TALLY        recompute verified/fuzzy/not_found and grounding_rate from
+                  (3); must equal the receipt's own tally.
+
+Usage:
+  grasp-verify-receipt SPEC RECEIPT [--root REPO_ROOT] [--deliverable PATH]
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import sys
+from pathlib import Path
+
+_WS = re.compile(r"\s+")
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _norm(text: str) -> str:
+    """Whitespace-normalise for 'fuzzy' comparison (words never change)."""
+    return _WS.sub(" ", text).strip()
+
+
+def check_deliverable(receipt: dict, root: Path, override: str | None) -> list[str]:
+    meta = receipt.get("deliverable") or {}
+    rel = override or meta.get("path")
+    if not rel:
+        return ["deliverable: receipt names no deliverable path (use --deliverable)"]
+    path = root / rel
+    if not path.is_file():
+        return [f"deliverable: file not found: {path}"]
+    actual = _sha256(path)
+    expected = meta.get("sha256", "")
+    if actual != expected:
+        return [f"deliverable: sha256 mismatch — file {actual[:16]}… vs receipt {expected[:16]}…"]
+    return []
+
+
+def check_sources(spec: dict, receipt: dict, root: Path) -> tuple[list[str], dict[str, str]]:
+    problems: list[str] = []
+    texts: dict[str, str] = {}
+    recorded = receipt.get("sources") or {}
+    for src in spec.get("sources", []):
+        sid, rel = src.get("id"), src.get("path")
+        path = root / rel
+        if not path.is_file():
+            problems.append(f"source {sid}: file not found: {path}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        texts[sid] = text
+        pinned = recorded.get(sid) or {}
+        if not pinned.get("sha256"):
+            problems.append(f"source {sid}: receipt pins no sha256 for this source (malformed receipt)")
+        elif (actual_sha := _sha256(path)) != pinned["sha256"]:
+            problems.append(
+                f"source {sid}: sha256 mismatch — file {actual_sha[:16]}… vs "
+                f"receipt {pinned['sha256'][:16]}… (source changed since pinning)"
+            )
+        if pinned.get("chars") is None:
+            problems.append(f"source {sid}: receipt pins no length for this source (malformed receipt)")
+        elif len(text) != pinned["chars"]:
+            problems.append(
+                f"source {sid}: length mismatch — {len(text)} chars vs receipt {pinned['chars']}"
+            )
+    return problems, texts
+
+
+def _citation_ok(status: str, quote: str, span: str) -> bool:
+    """Compare a spec quote to the source span for a claimed status.
+
+    An empty quote or empty span can NEVER pass — a forged receipt could
+    otherwise point fuzzy citations at whitespace and vacuously verify.
+    'fuzzy' tolerates whitespace/typography differences ONLY (the same
+    contract the receipt builder documents: words never change).
+    """
+    if not quote.strip() or not span.strip():
+        return False
+    if status == "verified":
+        return span == quote
+    if status == "fuzzy":
+        return _norm(span) == _norm(quote)
+    return False  # any other status can never pass
+
+
+def check_citations(spec: dict, receipt: dict, texts: dict[str, str]) -> tuple[list[str], dict]:
+    problems: list[str] = []
+    tally = {"verified": 0, "fuzzy": 0, "not_found": 0}
+    quotes = {c["id"]: c for c in spec.get("citations", [])}
+    for cit in receipt.get("citations", []):
+        cid, sid = cit.get("id"), cit.get("source_id")
+        status = cit.get("status", "not_found")
+        spec_cit = quotes.get(cid)
+        if spec_cit is None:
+            problems.append(f"citation {cid}: present in receipt but missing from spec")
+            continue
+        if status == "not_found":
+            tally["not_found"] += 1
+            problems.append(f"citation {cid}: status not_found — the quote is not in its source")
+            continue
+        if status not in ("verified", "fuzzy"):
+            problems.append(
+                f"citation {cid}: unknown status '{status}' — this verifier only accepts "
+                f"verified/fuzzy/not_found, and an unknown status can never pass (fail-closed)"
+            )
+            continue
+        quote = spec_cit.get("quote") or ""
+        if not quote.strip():
+            problems.append(f"citation {cid}: spec carries no quote — nothing to verify (fail-closed)")
+            continue
+        text = texts.get(sid)
+        if text is None:
+            problems.append(f"citation {cid}: source {sid} unavailable for offset check")
+            continue
+        start, end = cit.get("start", 0), cit.get("end", 0)
+        span = text[start:end]
+        if _citation_ok(status, quote, span):
+            tally[status] += 1
+        else:
+            problems.append(
+                f"citation {cid}: quote does not match source {sid} at [{start},{end}) "
+                f"— receipt offsets or source text have drifted"
+            )
+    recorded = receipt.get("tally") or {}
+    if recorded != tally:
+        problems.append(f"tally: recomputed {tally} vs receipt {recorded}")
+    total = sum(tally.values())
+    rate = (tally["verified"] + tally["fuzzy"]) / total if total else 0.0
+    if abs(rate - float(receipt.get("grounding_rate", 0.0))) > 1e-9:
+        problems.append(
+            f"grounding_rate: recomputed {rate:.4f} vs receipt {receipt.get('grounding_rate')}"
+        )
+    return problems, tally
+
+
+def verify(spec_path: Path, receipt_path: Path, root: Path, deliverable: str | None) -> int:
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    problems = check_deliverable(receipt, root, deliverable)
+    src_problems, texts = check_sources(spec, receipt, root)
+    problems += src_problems
+    cit_problems, tally = check_citations(spec, receipt, texts)
+    problems += cit_problems
+    if problems:
+        print("RECEIPT FAILED — the record does not match reality:")
+        for p in problems:
+            print(f"  ✗ {p}")
+        return 1
+    print(
+        f"RECEIPT VERIFIED — deliverable hash, {len(texts)} source hashes, and "
+        f"{sum(tally.values())} citations all re-check "
+        f"({tally['verified']} verified / {tally['fuzzy']} fuzzy / 0 not-found)."
+    )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("spec", help="the /prove-it citations spec JSON")
+    ap.add_argument("receipt", help="the grasp-legal-receipt JSON to re-verify")
+    ap.add_argument("--root", default=".", help="repo root that source/deliverable paths are relative to")
+    ap.add_argument("--deliverable", help="override the deliverable path from the receipt")
+    ns = ap.parse_args(argv)
+    return verify(Path(ns.spec), Path(ns.receipt), Path(ns.root), ns.deliverable)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
