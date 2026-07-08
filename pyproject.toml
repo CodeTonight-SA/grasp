@@ -37,6 +37,7 @@ Homepage = "https://github.com/CodeTonight-SA/grasp"
 [project.scripts]
 grasp-prove-it = "grasp.prove_it:main"
 grasp-legal-receipt = "grasp.legal_receipt:main"
+grasp-mcp = "grasp.mcp_server:main"
 
 [tool.setuptools]
 packages = ["grasp"]

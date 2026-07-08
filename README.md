@@ -101,6 +101,34 @@ fail.
 
 Requires Python ≥ 3.10 on a POSIX system (file locking uses `fcntl`).
 
+## Use it from Gemini CLI (or any MCP host)
+
+GRASP ships an MCP server (`grasp-mcp`, standard library only) and this
+repository doubles as a Gemini CLI extension — two commands and the agent
+records what it decides, believes, and claims:
+
+```bash
+pipx install "git+https://github.com/CodeTonight-SA/grasp"   # puts grasp-mcp on PATH
+gemini extensions install https://github.com/CodeTonight-SA/grasp
+```
+
+That is the whole install. The extension's `GEMINI.md` instructs the model to
+call `grasp_record_decision` before consequential actions,
+`grasp_record_belief` at checkpoints, and `grasp_prove_claim` before asserting
+any sourced quotation (a fabricated quote returns `not_found` — it cannot
+pass). Ask the model to run `grasp_verify` at any time: every signature, the
+chain linkage, and the Merkle root re-check offline, and the verdict comes
+back exactly as the arithmetic found it (`verified` / `degraded` / `broken`).
+
+Records land in `~/.grasp/` (`idr.jsonl`, `context.jsonl`) — or wherever
+`GRASP_HOME` points — and re-verify with this package alone, no server and no
+network. Any other MCP host (Claude Code, Antigravity `agy`, a custom
+harness) can register the same server with one settings entry:
+
+```json
+{ "mcpServers": { "grasp": { "command": "grasp-mcp" } } }
+```
+
 ## Quickstart
 
 Verify a claim's citation, then record the run into both signed chains:
