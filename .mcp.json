@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "grasp": {
+      "command": "grasp-mcp"
+    }
+  }
+}

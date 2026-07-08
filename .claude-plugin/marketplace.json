@@ -1,0 +1,14 @@
+{
+  "name": "grasp",
+  "owner": {
+    "name": "CodeTonight SA",
+    "url": "https://github.com/CodeTonight-SA"
+  },
+  "plugins": [
+    {
+      "name": "grasp",
+      "source": "./",
+      "description": "Signed, tamper-evident, third-party-verifiable records of what the agent decided, believed, and claimed — registers the grasp-mcp server plus the grasp-provenance behaviour-contract skill."
+    }
+  ]
+}

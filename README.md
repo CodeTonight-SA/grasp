@@ -101,33 +101,45 @@ fail.
 
 Requires Python ≥ 3.10 on a POSIX system (file locking uses `fcntl`).
 
-## Use it from Gemini CLI (or any MCP host)
+## Use it from any MCP host
 
-GRASP ships an MCP server (`grasp-mcp`, standard library only) and this
-repository doubles as a Gemini CLI extension — two commands and the agent
-records what it decides, believes, and claims:
+GRASP ships an MCP server (`grasp-mcp`, standard library only), and this
+repository is simultaneously a **Claude Code plugin + one-plugin marketplace**
+(`.claude-plugin/`), a **Gemini CLI extension** (`gemini-extension.json`), and
+an **Antigravity plugin**. One prerequisite for every local host:
 
 ```bash
 pipx install "git+https://github.com/CodeTonight-SA/grasp"   # puts grasp-mcp on PATH
-gemini extensions install https://github.com/CodeTonight-SA/grasp
 ```
 
-That is the whole install. The extension's `GEMINI.md` instructs the model to
-call `grasp_record_decision` before consequential actions,
-`grasp_record_belief` at checkpoints, and `grasp_prove_claim` before asserting
-any sourced quotation (a fabricated quote returns `not_found` — it cannot
-pass). Ask the model to run `grasp_verify` at any time: every signature, the
-chain linkage, and the Merkle root re-check offline, and the verdict comes
-back exactly as the arithmetic found it (`verified` / `degraded` / `broken`).
+| Host | Install | Guide |
+|---|---|---|
+| Claude Code | `claude plugin marketplace add CodeTonight-SA/grasp` then `claude plugin install grasp@CodeTonight-SA/grasp` | [docs/install/claude-code.md](docs/install/claude-code.md) |
+| Gemini CLI | `gemini extensions install https://github.com/CodeTonight-SA/grasp` | [docs/install/gemini-cli.md](docs/install/gemini-cli.md) |
+| Antigravity (`agy`) | `agy plugin install https://github.com/CodeTonight-SA/grasp` | [docs/install/antigravity.md](docs/install/antigravity.md) |
+| Claude Desktop | one `mcpServers` entry in `claude_desktop_config.json` | [docs/install/claude-desktop.md](docs/install/claude-desktop.md) |
+| OpenAI Codex CLI | `[mcp_servers.grasp]` in `~/.codex/config.toml` | [docs/install/codex.md](docs/install/codex.md) |
+| Claude for Work / Cowork | remote-only — self-hosted bridge required | [docs/install/claude-for-work.md](docs/install/claude-for-work.md) |
+| ChatGPT (Developer mode) | remote-only — self-hosted bridge required | [docs/install/chatgpt.md](docs/install/chatgpt.md) |
 
-Records land in `~/.grasp/` (`idr.jsonl`, `context.jsonl`) — or wherever
-`GRASP_HOME` points — and re-verify with this package alone, no server and no
-network. Any other MCP host (Claude Code, Antigravity `agy`, a custom
-harness) can register the same server with one settings entry:
+Any other MCP host registers the same server with one settings entry:
 
 ```json
 { "mcpServers": { "grasp": { "command": "grasp-mcp" } } }
 ```
+
+The behaviour contract travels with the install (`GEMINI.md` for Gemini CLI;
+the `grasp-provenance` skill for the Claude Code plugin): call
+`grasp_record_decision` before consequential actions, `grasp_record_belief`
+at checkpoints, and `grasp_prove_claim` before asserting any sourced
+quotation (a fabricated quote returns `not_found` — it cannot pass). Ask the
+model to run `grasp_verify` at any time: every signature, the chain linkage,
+and the Merkle root re-check offline, and the verdict comes back exactly as
+the arithmetic found it (`verified` / `degraded` / `broken`).
+
+Records land in `~/.grasp/` (`idr.jsonl`, `context.jsonl`) — or wherever
+`GRASP_HOME` points — and re-verify with this package alone, no server and no
+network.
 
 ## Quickstart
 
