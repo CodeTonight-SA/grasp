@@ -1,0 +1,8 @@
+{
+  "kty": "OKP",
+  "crv": "Ed25519",
+  "x": "1kV0EvbFsnynQI7avSeGPxs6cfvmgAUqoivqxKR_vSA",
+  "kid": "grasp-tmif-claimant-2026",
+  "use": "sig",
+  "alg": "EdDSA"
+}
