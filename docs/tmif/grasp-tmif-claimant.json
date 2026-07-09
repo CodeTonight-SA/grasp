@@ -1,0 +1,56 @@
+{
+  "system_identifier": "urn:codetonight:system:grasp-cryptographic-causation",
+  "system_version": "1.0.0",
+  "valid_until": "2026-12-31T23:59:59Z",
+  "transparency_level_lower_bound": 3,
+  "components": [
+    {
+      "component_identifier": "urn:codetonight:component:grasp-engine",
+      "component_version": "1.0.0",
+      "claims": [
+        {
+          "threat_identifier": "urn:codetonight:threat:tampering:post-hoc-record-alteration",
+          "mitigation_description": "Every consequential agent decision emits a signed Intent Decision Record (IDR) into an append-only forest: HMAC-SHA256 (or ed25519+ML-DSA-65) per-record signatures, predecessor linkage inside the signed body, RFC-6962 Merkle root over sorted content addresses. Any byte alteration is detectable by recomputation. Source is public; the verification is arithmetic, not attestation.",
+          "transparency_level": 3,
+          "artifacts": [
+            "https://github.com/codetonight-sa/grasp",
+            "https://grasp-web-chi.vercel.app/try"
+          ]
+        },
+        {
+          "threat_identifier": "urn:codetonight:threat:repudiation:storage-custodian-rewrite",
+          "mitigation_description": "The forest Merkle root is committed to Bitcoin via OpenTimestamps, so even the record custodian cannot rewrite history undetectably. The production decision-chain root (content address 0bba0792..., 501 decisions) is confirmed in Bitcoin block 956992; any party can check the OTS proof against a public block explorer with no trust in the authors.",
+          "transparency_level": 4,
+          "artifacts": [
+            "https://grip-web.com/decision-chain",
+            "urn:bitcoin:block:956992"
+          ]
+        },
+        {
+          "threat_identifier": "urn:ada:threat:spoofing:fabricated-citation",
+          "mitigation_description": "Every outward claim carries a receipt binding it to a verbatim quotation at recorded byte offsets in a content-addressed source; a fabricated quotation can only record as not_found and marks the deliverable un-filed-safe. An advisory model layer may only tighten, never relax, the deterministic verdict.",
+          "transparency_level": 3,
+          "artifacts": [
+            "https://github.com/codetonight-sa/grasp",
+            "https://grasp-web-chi.vercel.app/try"
+          ]
+        }
+      ]
+    },
+    {
+      "component_identifier": "urn:codetonight:component:grasp-verifier",
+      "component_version": "1.0.0",
+      "claims": [
+        {
+          "threat_identifier": "urn:codetonight:threat:elevation-of-privilege:self-adjudication",
+          "mitigation_description": "Verification and replay are pure, deterministic, standard-library re-derivations executable by any third party offline: re-hash, re-verify signatures, re-walk the Merkle path, re-derive the replay digest (byte-identical across machines and providers; no language model on the path). The claimant's own report is never the criterion (exogenous-anchor law). Two independent replays of an unchanged record set that disagree would falsify this claim.",
+          "transparency_level": 4,
+          "artifacts": [
+            "https://github.com/codetonight-sa/grasp",
+            "https://grasp-web-chi.vercel.app/try"
+          ]
+        }
+      ]
+    }
+  ]
+}

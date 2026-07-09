@@ -169,6 +169,21 @@ have to trust a single implementation. Bitcoin anchors verify through the
 upstream OpenTimestamps client (`pip install opentimestamps-client && ots
 verify <proof>.ots`) — not our code at all.
 
+## TMIF (declaration layer)
+
+GRASP's claims are also published as a signed
+[TMIF Claimant document](docs/tmif.md) —
+[`draft-laurie-tmif-01`](https://datatracker.ietf.org/doc/draft-laurie-tmif/),
+*A Standard for Claiming Transparency and Falsifiability*. To be precise
+about the relationship: GRASP is **not** an implementation of TMIF. GRASP
+is the engine that produces tamper-evident records; TMIF is a declaration
+format above it, and GRASP makes a natural reference Claimant because its
+artifacts (signed chain, in-browser verifier, Bitcoin anchor) are exactly
+what TMIF directs evaluators to verify. Where TMIF Claimants self-assert
+transparency levels, GRASP under-claims by policy — see
+[`docs/tmif.md`](docs/tmif.md) for the signed document, the verifying key,
+and a copy-paste verification snippet.
+
 ## Licence
 
 **AGPL-3.0-only** (see `LICENSE`). A provenance floor earns trust only if the
