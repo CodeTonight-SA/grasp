@@ -1,0 +1,11 @@
+{
+  "name": "grasp",
+  "version": "0.2.0",
+  "description": "GRASP cryptographic causation for Gemini CLI: signed, tamper-evident, third-party-verifiable records of what the agent decided, believed, and claimed.",
+  "contextFileName": "GEMINI.md",
+  "mcpServers": {
+    "grasp": {
+      "command": "grasp-mcp"
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "grasp",
+  "version": "0.2.0",
+  "description": "GRASP cryptographic causation: signed, tamper-evident, third-party-verifiable records of what the agent decided, believed, and claimed — a decision chain, a belief chain, and a deterministic citation floor, all re-verifiable offline.",
+  "author": {
+    "name": "CodeTonight SA",
+    "url": "https://github.com/CodeTonight-SA"
+  },
+  "homepage": "https://github.com/CodeTonight-SA/grasp",
+  "repository": "https://github.com/CodeTonight-SA/grasp",
+  "license": "AGPL-3.0-only",
+  "mcpServers": {
+    "grasp": {
+      "command": "grasp-mcp"
+    }
+  }
+}
