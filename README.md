@@ -17,6 +17,22 @@ construction, so a *skeptic* (a regulator, opposing counsel, an auditor) can
 independently refute or confirm them. The verifier is the math plus an external
 party, never the AI. Don't trust it — witness it.
 
+## Where GRASP sits (the open-core family)
+
+GRASP is the **open proof layer** of a wider stack. The position is open-core:
+*open-source the tools, licence the engine.*
+
+| Piece | What it is | Licence |
+|---|---|---|
+| **GRASP** (this repo) | The proof layer — the reference implementation of cryptographic causation (signed decision chain, signed memory chain, deterministic citation floor). | **AGPL-3.0-only** — open |
+| **HAPPI** | The open protocol the stack speaks — a specification, not a black box. GRASP's `cite.verify` is pinned byte-compatible to the HAPPI `cite.verify` verb (happi/1.3). | Open standard ([happi.md](https://happi.md)) |
+| **GRIP + HAL** | The reasoning + provenance engine (GRIP) and the LLM-agnostic multi-provider substrate (HAL). Not required to produce *or* verify a GRASP record. | Licensed / private |
+
+The load-bearing consequence for anyone relying on a record: **GRASP records are
+produced and re-verified by this open package alone** — no GRIP runtime, no HAL,
+no network, no account (see *Verify a receipt* below). The engine is licensed;
+the tool that lets a skeptic check its work is not. Deeds, not words.
+
 ## What is in the box
 
 | Module | What it does |
