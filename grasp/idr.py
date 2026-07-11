@@ -41,6 +41,30 @@ def _default_idr_path() -> Path:
     return grasp_home() / "idr.jsonl"
 
 
+def _coerce_optional_path(path: Any) -> Path | None:
+    """Validate + normalise an optional filesystem-path argument to ``Path | None``.
+
+    Accepts ``None``, a ``str``, or any ``os.PathLike`` (→ ``Path``). ANY other
+    type raises a clear ``TypeError`` naming the expected types — instead of
+    crashing opaquely deep in the reader (``'list' object has no attribute
+    'exists'``) the way a positional-arg mix-up like
+    ``verify_context_chain(ctx_list, idr_list)`` does. The chokepoint that turns
+    a mis-call into a readable error rather than an ``AttributeError`` traceback.
+    """
+    if path is None:
+        return None
+    if isinstance(path, Path):
+        return path
+    if isinstance(path, (str, os.PathLike)):
+        return Path(path)
+    raise TypeError(
+        f"path must be a str, os.PathLike, or None — got {type(path).__name__}. "
+        f"If you already loaded a chain and meant to verify it, pass the file "
+        f"path (not the chain) and use keywords: verify_context_chain(path=..., "
+        f"head=...)."
+    )
+
+
 @dataclass
 class PrecogIDR:
     happi: str
@@ -269,11 +293,34 @@ def read_idr_chain(
 
     If ``predecessor_id`` is None, returns all IDRs in file order.
     Otherwise traverses the chain backwards from the named IDR.
+
+    ``predecessor_id`` must be a str id or None; ``path`` a str/PathLike/None.
+    A wrong type (e.g. a whole chain passed where a path/id was expected) raises
+    a clear ``TypeError`` at the boundary instead of a downstream
+    ``AttributeError``.
     """
-    target = path or _default_idr_path()
+    if predecessor_id is not None and not isinstance(predecessor_id, str):
+        raise TypeError(
+            f"predecessor_id must be a str id or None — got "
+            f"{type(predecessor_id).__name__}"
+        )
+    target = _coerce_optional_path(path) or _default_idr_path()
     if not target.exists():
         return []
+    all_idrs = _parse_idr_file(target)
+    if predecessor_id is None:
+        return all_idrs
+    return _traverse_predecessor_chain(all_idrs, predecessor_id)
 
+
+def _parse_idr_file(target: Path) -> list[PrecogIDR]:
+    """Parse every JSONL line of ``target`` into a ``PrecogIDR`` (file order).
+
+    ``if k in d`` is the back-compat key: legacy records predate optional fields
+    (e.g. ``decision_anatomy``). Without the guard a missing key raises KeyError →
+    the ``except`` below would SILENTLY DROP the legacy record from the chain.
+    Optional fields fall back to their dataclass defaults instead.
+    """
     all_idrs: list[PrecogIDR] = []
     with open(target, encoding="utf-8") as fh:
         for line in fh:
@@ -282,21 +329,20 @@ def read_idr_chain(
                 continue
             try:
                 d = json.loads(line)
-                # ``if k in d`` is the back-compat key: legacy records predate
-                # optional fields (e.g. ``decision_anatomy``). Without the guard a
-                # missing key raises KeyError → the ``except`` below would SILENTLY
-                # DROP the legacy record from the chain. Optional fields fall back
-                # to their dataclass defaults instead.
                 all_idrs.append(PrecogIDR(**{
                     k: d[k] for k in PrecogIDR.__dataclass_fields__ if k in d
                 }))
             except (json.JSONDecodeError, KeyError, TypeError):
                 continue
+    return all_idrs
 
-    if predecessor_id is None:
-        return all_idrs
 
-    # Build lookup: id → idr
+def _traverse_predecessor_chain(
+    all_idrs: list[PrecogIDR], predecessor_id: str
+) -> list[PrecogIDR]:
+    """Walk backwards from ``predecessor_id`` via ``predecessor_idr`` links and
+    return the chain root→leaf. Cycle-safe (a ``visited`` set); stops at the
+    first id absent from the file."""
     by_id = {idr.id: idr for idr in all_idrs}
     chain: list[PrecogIDR] = []
     current_id: str | None = predecessor_id

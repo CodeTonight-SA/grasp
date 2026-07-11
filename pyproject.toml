@@ -35,6 +35,7 @@ classifiers = [
 Homepage = "https://github.com/CodeTonight-SA/grasp"
 
 [project.scripts]
+grasp = "grasp.cli:main"
 grasp-prove-it = "grasp.prove_it:main"
 grasp-legal-receipt = "grasp.legal_receipt:main"
 grasp-mcp = "grasp.mcp_server:main"

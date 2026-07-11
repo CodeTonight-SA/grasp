@@ -37,6 +37,7 @@ from grasp.idr_forest import (
 from grasp.idr import (
     PrecogIDR,
     _canonical_json,
+    _coerce_optional_path,
     append_idr,
     build_idr,
     content_addr,
@@ -79,8 +80,11 @@ def chain_path(path: Path | None = None) -> Path:
     # (``context.jsonl`` -> ``context-a7b2.jsonl``) via the shared
     # ``context_head._session_path`` helper (chain + HEAD use ONE namespacing
     # rule, so they never disagree on the session segment). Unchanged path when
-    # no session id is set.
-    return path or _session_path(_default_chain_path())
+    # no session id is set. ``path`` is type-guarded (_coerce_optional_path): a
+    # wrong type — e.g. a whole chain passed positionally into
+    # verify_context_chain(ctx, idrs) — raises a clear TypeError here instead of
+    # crashing opaquely with "'list' object has no attribute 'exists'".
+    return _coerce_optional_path(path) or _session_path(_default_chain_path())
 
 
 def blob_path(addr: str, *, path: Path | None = None) -> Path:

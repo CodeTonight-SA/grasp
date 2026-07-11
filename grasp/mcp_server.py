@@ -37,7 +37,9 @@ from grasp.idr import build_idr, append_idr, content_addr, read_idr_chain
 from grasp.idr_forest import (
     IdrForestError,
     build_chain_forest,
+    find_unanchored,
     forest_merkle_root,
+    is_admissible_anchor,
     verify_chain_integrity,
 )
 from grasp.provenance import record_proveit_provenance
@@ -162,21 +164,43 @@ def tool_verify(_args: dict) -> dict:
     out: dict[str, Any] = {"ok": True, "home": str(grasp_home())}
     chain = read_idr_chain()
     out["decisions"] = len(chain)
+    anchored = True  # vacuously true for an empty ledger
     if chain:
+        # The ledger's genesis record may have ``predecessor_idr: null`` (e.g. a
+        # ledger first seeded by a prove-it artifact) — NOT an admissible
+        # exogenous anchor. Use the ``human:`` fallback as the forest's DECLARED
+        # root so the forest builds instead of crashing ``AttributeError:
+        # 'NoneType' … 'startswith'``. The declared root is never a node and is
+        # never signed-over, so it cannot change any node's HMAC tamper verdict.
+        root = chain[0].predecessor_idr
+        genesis = root if is_admissible_anchor(root) else GENESIS_ANCHOR
         try:
-            forest = build_chain_forest(chain, genesis_anchor=chain[0].predecessor_idr)
-            verdict = verify_chain_integrity(forest)
-            out["decision_chain"] = verdict.value
+            forest = build_chain_forest(chain, genesis_anchor=genesis)
+            out["decision_chain"] = verify_chain_integrity(forest).value
             out["merkle_root"] = forest_merkle_root(forest)
+            unanchored = find_unanchored(forest)
+            anchored = not unanchored
+            out["anchored"] = anchored
+            if unanchored:
+                out["unanchored"] = len(unanchored)
         except IdrForestError as exc:
             out["decision_chain"] = Verdict.BROKEN.value
             out["decision_chain_error"] = str(exc)
+            anchored = False
     else:
         out["decision_chain"] = "empty"
     belief = verify_context_chain()
     out["belief_chain"] = belief.value if belief is not None else "empty"
-    out["ok"] = out.get("decision_chain") in ("empty", Verdict.VERIFIED.value) and \
+    # ``ok`` is the AGGREGATE trust signal — it requires BOTH axes: the chains
+    # are tamper-free (VERIFIED/empty) AND every decision roots at an exogenous
+    # anchor. Tamper (``decision_chain``) and anchoring (``anchored``) are
+    # reported SEPARATELY so ``ok`` never conflates them: a tamper-free but
+    # unanchored ledger reads decision_chain=verified, anchored=false, ok=false —
+    # a skeptic gating on ``ok`` is never misled that anchoring holds when it
+    # does not.
+    tamper_free = out.get("decision_chain") in ("empty", Verdict.VERIFIED.value) and \
         out.get("belief_chain") in ("empty", Verdict.VERIFIED.value)
+    out["ok"] = tamper_free and anchored
     return out
 
 
