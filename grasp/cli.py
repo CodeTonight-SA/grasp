@@ -33,10 +33,32 @@ def _emit(out: dict, *, as_json: bool) -> None:
     print(json.dumps(out) if as_json else json.dumps(out, indent=2, sort_keys=True))
 
 
+def _verify_failure_reason(out: dict) -> str:
+    """A single loud line naming WHICH axis failed, so ``ok=False`` never reads
+    as a generic failure. Tamper (BROKEN) and anchoring (unanchored) are
+    distinct: a skeptic must not confuse 'a byte was tampered' with 'not rooted
+    at an exogenous anchor'."""
+    if "broken" in (out.get("decision_chain"), out.get("belief_chain")):
+        return "VERIFY FAILED: BROKEN — a signed record was tampered."
+    if out.get("anchored") is False:
+        n = out.get("unanchored", 0)
+        return (
+            f"VERIFY INCOMPLETE: {n} decision(s) do not root at an exogenous "
+            "anchor (ci:/human:/council:/hypo:). Not tampered, but not "
+            "exogenously anchored — see 'unanchored'/'anchored'."
+        )
+    if "degraded" in (out.get("decision_chain"), out.get("belief_chain")):
+        return "VERIFY DEGRADED: a record uses a scheme this build cannot fully check."
+    return "VERIFY FAILED."
+
+
 def _cmd_verify(args: argparse.Namespace) -> int:
     out = tool_verify({})
     _emit(out, as_json=args.json)
-    return 0 if out.get("ok") else 1
+    if out.get("ok"):
+        return 0
+    print(_verify_failure_reason(out), file=sys.stderr)
+    return 1
 
 
 def _cmd_status(args: argparse.Namespace) -> int:

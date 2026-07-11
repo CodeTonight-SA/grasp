@@ -48,14 +48,29 @@ def home(tmp_path, monkeypatch):
 
 def test_bug_a_grasp_verify_survives_prove_it_seeded_ledger(home):
     """A ledger whose genesis is a prove-it artifact has ``predecessor_idr:
-    null``. ``grasp_verify`` must VERIFY it, not crash on ``None.startswith``."""
+    null``. ``grasp_verify`` must not crash on ``None.startswith`` — AND must
+    report the two trust axes SEPARATELY (Pool-B council review): tamper-free
+    (``decision_chain=verified``) but NOT exogenously anchored, so ``ok`` is
+    False. ``ok`` must never conflate tamper-evidence with anchoring."""
     tool_prove_claim({"title": "claim", "quote": "hello", "source_text": "hello world"})
     out = tool_verify({})
-    assert out["ok"] is True
-    assert out["decision_chain"] == "verified"
+    assert out["decision_chain"] == "verified"   # signatures intact, no crash
     assert out["merkle_root"]
-    # Honest: the prove-it genesis is not exogenously rooted — surfaced, not hidden.
+    assert out["anchored"] is False              # not rooted at an exogenous anchor
     assert out.get("unanchored", 0) >= 1
+    assert out["ok"] is False                    # ok = tamper-free AND anchored
+
+
+def test_bug_a_anchored_ledger_is_fully_ok(home):
+    """Goodhart pair to the unanchored case: a ledger seeded by a decision that
+    roots at ``human:`` IS exogenously anchored → decision_chain=verified,
+    anchored=true, ok=true. Proves ``anchored`` reflects reality, not a
+    hard-coded constant."""
+    tool_record_decision({"what": "ship it", "why": "the tests pass"})
+    out = tool_verify({})
+    assert out["decision_chain"] == "verified"
+    assert out["anchored"] is True
+    assert out["ok"] is True
 
 
 def test_bug_a_is_admissible_anchor_rejects_non_str_cleanly():
@@ -142,3 +157,16 @@ def test_bug_d_grasp_cli_status_ok(home, capsys):
     assert cli_main(["status"]) == 0
     out = capsys.readouterr().out
     assert "server" in out and "idr.jsonl" in out
+
+
+def test_bug_d_grasp_cli_flags_unanchored_distinctly(home, capsys):
+    """A tamper-free but unanchored ledger (prove-it-seeded) exits NON-ZERO, and
+    the reason names ANCHORING — not BROKEN. The de-conflation (council review)
+    is visible at the shell, so a skeptic never confuses 'not exogenously
+    anchored' with 'a byte was tampered'."""
+    tool_prove_claim({"title": "c", "quote": "hi", "source_text": "hi there"})
+    rc = cli_main(["verify"])
+    err = capsys.readouterr().err.lower()
+    assert rc == 1
+    assert "anchor" in err
+    assert "broken" not in err
