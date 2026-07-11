@@ -106,9 +106,24 @@ class Forest:
     edges: Mapping[str, str | None]
 
 
-def _is_admissible_anchor(anchor_id: str) -> bool:
-    """``True`` if ``anchor_id`` matches an admissible exogenous-anchor prefix."""
-    return any(anchor_id.startswith(prefix) for prefix in EXOGENOUS_ANCHOR_PATTERNS)
+def _is_admissible_anchor(anchor_id: object) -> bool:
+    """``True`` if ``anchor_id`` is a str matching an admissible exogenous-anchor
+    prefix. A NON-str anchor — e.g. ``None`` from a ledger whose genesis record
+    has ``predecessor_idr: null`` (a prove-it-artifact-seeded ledger) — returns
+    ``False``, so callers raise a clean ``IdrForestError`` rather than crashing
+    with ``AttributeError: 'NoneType' object has no attribute 'startswith'``. The
+    verifier must never crash on a real on-disk ledger; a non-anchorable root is
+    a clean, catchable error."""
+    return isinstance(anchor_id, str) and any(
+        anchor_id.startswith(prefix) for prefix in EXOGENOUS_ANCHOR_PATTERNS
+    )
+
+
+#: Public cross-module seam for the anchor-admissibility predicate. The verify
+#: entrypoints (``grasp.ledger.verify_ledger`` / the ``grasp`` CLI) use it to
+#: pick a valid genesis anchor when a ledger's own genesis root is ``None`` /
+#: non-admissible. Alias (not a re-implementation) — the logic lives once.
+is_admissible_anchor = _is_admissible_anchor
 
 
 def empty_forest(roots: tuple[str, ...]) -> Forest:
@@ -133,13 +148,42 @@ def empty_forest(roots: tuple[str, ...]) -> Forest:
 # ---------------------------------------------------------------------------
 
 
+def _as_precog_idr(node: PrecogIDR | Mapping) -> PrecogIDR:
+    """Coerce a raw mapping — e.g. a ``json.loads``'d ``idr.jsonl`` line — into a
+    ``PrecogIDR`` so a skeptic can build a forest straight from parsed JSONL.
+
+    A ``PrecogIDR`` passes through unchanged. A mapping is projected with the
+    SAME back-compat rule ``read_idr_chain`` uses (optional fields absent on
+    legacy records fall back to dataclass defaults). Any OTHER type raises a
+    clear ``TypeError`` naming the fix — rather than the opaque
+    ``AttributeError: 'dict' object has no attribute 'id'`` a caller hits when
+    they pass ``[json.loads(line) for line in fh]`` directly.
+    """
+    if isinstance(node, PrecogIDR):
+        return node
+    if isinstance(node, Mapping):
+        return PrecogIDR(**{
+            k: node[k] for k in PrecogIDR.__dataclass_fields__ if k in node
+        })
+    raise TypeError(
+        f"add_idr/build_chain_forest expected a PrecogIDR or mapping, got "
+        f"{type(node).__name__}. Parse ledger lines first: "
+        f"PrecogIDR(**json.loads(line)) — or pass the dict itself, which is "
+        f"coerced for you."
+    )
+
+
 def add_idr(
     forest: Forest,
-    idr: PrecogIDR,
+    idr: PrecogIDR | Mapping,
     *,
     anchor_id: str | None = None,
 ) -> Forest:
     """Add one IDR node to ``forest``. Returns a new forest (immutable input).
+
+    ``idr`` may be a ``PrecogIDR`` OR a raw mapping (a parsed JSONL line); a
+    mapping is coerced via ``_as_precog_idr`` so ``build_chain_forest`` accepts
+    ``[json.loads(line) for line in fh]`` without the caller hand-wrapping each.
 
     The ``anchor_id`` argument names the nearest exogenous root ancestor.
     When omitted, the resolver walks the predecessor chain looking for a
@@ -149,7 +193,9 @@ def add_idr(
     Raises ``IdrForestError`` if:
     * The node id already exists in the forest.
     * The IDR's ``predecessor_idr`` is set but no matching node exists.
+    Raises ``TypeError`` if ``idr`` is neither a ``PrecogIDR`` nor a mapping.
     """
+    idr = _as_precog_idr(idr)
     if idr.id in forest.nodes:
         raise IdrForestError(
             f"node id collision: {idr.id!r} already exists in forest"

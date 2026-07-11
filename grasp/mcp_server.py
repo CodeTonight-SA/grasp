@@ -37,7 +37,9 @@ from grasp.idr import build_idr, append_idr, content_addr, read_idr_chain
 from grasp.idr_forest import (
     IdrForestError,
     build_chain_forest,
+    find_unanchored,
     forest_merkle_root,
+    is_admissible_anchor,
     verify_chain_integrity,
 )
 from grasp.provenance import record_proveit_provenance
@@ -163,11 +165,25 @@ def tool_verify(_args: dict) -> dict:
     chain = read_idr_chain()
     out["decisions"] = len(chain)
     if chain:
+        # The ledger's genesis record may have ``predecessor_idr: null`` (e.g. a
+        # ledger first seeded by a prove-it artifact) — that is NOT an admissible
+        # exogenous anchor, so use the ``human:`` fallback as the forest's
+        # declared root. Every node still verifies purely by its own HMAC, so the
+        # fallback never changes the tamper verdict; it only lets the forest build
+        # instead of crashing ``AttributeError: 'NoneType' … 'startswith'``.
+        root = chain[0].predecessor_idr
+        genesis = root if is_admissible_anchor(root) else GENESIS_ANCHOR
         try:
-            forest = build_chain_forest(chain, genesis_anchor=chain[0].predecessor_idr)
+            forest = build_chain_forest(chain, genesis_anchor=genesis)
             verdict = verify_chain_integrity(forest)
             out["decision_chain"] = verdict.value
             out["merkle_root"] = forest_merkle_root(forest)
+            unanchored = find_unanchored(forest)
+            if unanchored:
+                # Informational: nodes not reaching an exogenous root. Does NOT
+                # change ``decision_chain`` (the tamper verdict) — signatures are
+                # a separate axis from anchoring.
+                out["unanchored"] = len(unanchored)
         except IdrForestError as exc:
             out["decision_chain"] = Verdict.BROKEN.value
             out["decision_chain_error"] = str(exc)
