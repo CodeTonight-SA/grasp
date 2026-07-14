@@ -135,6 +135,7 @@ pipx install "git+https://github.com/CodeTonight-SA/grasp"   # puts grasp-mcp on
 | Antigravity (`agy`) | `agy plugin install https://github.com/CodeTonight-SA/grasp` | [docs/install/antigravity.md](docs/install/antigravity.md) |
 | Claude Desktop | one `mcpServers` entry in `claude_desktop_config.json` | [docs/install/claude-desktop.md](docs/install/claude-desktop.md) |
 | OpenAI Codex CLI | `[mcp_servers.grasp]` in `~/.codex/config.toml` | [docs/install/codex.md](docs/install/codex.md) |
+| xAI Grok Build | `grok mcp add grasp grasp-mcp` | [docs/install/grok-build.md](docs/install/grok-build.md) |
 | Claude for Work / Cowork | remote-only — self-hosted bridge required | [docs/install/claude-for-work.md](docs/install/claude-for-work.md) |
 | ChatGPT (Developer mode) | remote-only — self-hosted bridge required | [docs/install/chatgpt.md](docs/install/chatgpt.md) |
 
