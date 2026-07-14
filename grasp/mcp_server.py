@@ -42,6 +42,7 @@ from grasp.idr_forest import (
     is_admissible_anchor,
     verify_chain_integrity,
 )
+from grasp.card import render_card
 from grasp.provenance import record_proveit_provenance
 from grasp.prove_it import verify_quote
 from grasp.verdict import Verdict
@@ -333,7 +334,10 @@ def handle_message(msg: dict) -> dict | None:
         except Exception as exc:  # noqa: BLE001 — surface as tool error, never crash the server
             result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         return _response(req_id, {
-            "content": [{"type": "text", "text": _canonical(result)}],
+            # Humans get a portable provenance card in every harness TUI;
+            # programs get the canonical dict via structuredContent.
+            "content": [{"type": "text", "text": render_card(name, result)}],
+            "structuredContent": result,
             "isError": not result.get("ok", False),
         })
     if req_id is None:

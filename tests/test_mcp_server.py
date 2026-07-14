@@ -49,8 +49,10 @@ class McpClient:
     def call_tool(self, name: str, arguments: dict | None = None) -> dict:
         resp = self.request("tools/call", {"name": name, "arguments": arguments or {}})
         assert "result" in resp, f"tool call failed at RPC layer: {resp}"
-        content = resp["result"]["content"][0]["text"]
-        return json.loads(content)
+        # Programs consume the canonical dict via structuredContent; the
+        # text content is a human-facing provenance card (grasp/card.py).
+        assert resp["result"]["content"][0]["text"].startswith("╭─ GRASP")
+        return resp["result"]["structuredContent"]
 
     def close(self) -> None:
         if self.proc.stdin:

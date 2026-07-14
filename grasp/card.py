@@ -1,0 +1,109 @@
+"""Portable provenance cards for GRASP MCP tool results.
+
+Harness TUIs (Grok Build, Gemini CLI, Codex, Antigravity, Claude Code,
+Claude Desktop) render MCP tool output as plain text. Raw canonical JSON
+reads as a wall of noise; these cards give every GRASP result one
+glanceable, consistent shape in ANY harness:
+
+- unicode box-drawing + a few glyphs, NO ANSI colour (many TUIs mangle
+  or strip escape codes — portability beats colour);
+- width-capped so narrow panes never wrap mid-box;
+- deterministic (same result dict -> byte-identical card);
+- honest: rows render only keys PRESENT in the result — the card never
+  invents fields.
+
+The full result dict still travels as MCP ``structuredContent`` — the
+card is for humans, the JSON for programs.
+"""
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+WIDTH = 62  # total card width incl. borders; safe in narrow TUI panes
+
+_TITLES = {
+    "grasp_record_decision": "decision recorded",
+    "grasp_record_belief": "belief recorded",
+    "grasp_prove_claim": "prove claim",
+    "grasp_verify": "chain verify",
+    "grasp_status": "status",
+}
+
+# Curated display order; anything else follows alphabetically.
+_PREFERRED = (
+    "status", "verified", "grounding_rate", "quote", "claim",
+    "source_path", "source_sha256", "sha256", "id", "idr_id",
+    "context_id", "head", "depth", "ts", "entries", "count",
+    "filed_safe",
+)
+_SKIP = {"ok", "error"}
+_MAX_ROWS = 10
+_HEXISH = re.compile(r"^(sha256:)?[0-9a-f]{16,}$")
+
+
+def _short(value: str) -> str:
+    if _HEXISH.match(value):
+        prefix = "sha256:" if value.startswith("sha256:") else ""
+        body = value[len(prefix):]
+        return f"{prefix}{body[:12]}…"
+    return value
+
+
+def _bar(rate: float, slots: int = 10) -> str:
+    filled = max(0, min(slots, round(rate * slots)))
+    return "█" * filled + "░" * (slots - filled) + f" {rate:.2f}"
+
+
+def _fmt(key: str, value: Any) -> str:
+    if key == "grounding_rate" and isinstance(value, (int, float)):
+        return _bar(float(value))
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return _short(value)
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True, ensure_ascii=False)
+    return str(value)
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _row(label: str, value: str) -> str:
+    inner = WIDTH - 4  # "│ " + " │"
+    body = f"{label:<11}{value}"
+    return f"│ {_clip(body, inner):<{inner}} │"
+
+
+def _title_line(glyph: str, title: str) -> str:
+    head = f"╭─ GRASP {glyph} {title} "
+    return head + "─" * (WIDTH - len(head) - 1) + "╮"
+
+
+def _glyph(tool: str, result: dict) -> str:
+    if not result.get("ok", False):
+        return "✗"
+    if tool == "grasp_prove_claim":
+        return "✓" if result.get("verified") else "✗"
+    return "●"
+
+
+def render_card(tool: str, result: dict) -> str:
+    """One portable card for one tool result. Pure + deterministic."""
+    glyph = _glyph(tool, result)
+    title = _TITLES.get(tool, tool)
+    lines = [_title_line(glyph, title)]
+
+    keys = [k for k in _PREFERRED if k in result]
+    keys += sorted(k for k in result
+                   if k not in _PREFERRED and k not in _SKIP)
+    for key in keys[:_MAX_ROWS]:
+        lines.append(_row(key, _fmt(key, result[key])))
+
+    if not result.get("ok", False):
+        lines.append(_row("error", str(result.get("error", "unknown"))))
+    lines.append("╰" + "─" * (WIDTH - 2) + "╯")
+    return "\n".join(lines)
