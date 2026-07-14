@@ -154,6 +154,26 @@ model to run `grasp_verify` at any time: every signature, the chain linkage,
 and the Merkle root re-check offline, and the verdict comes back exactly as
 the arithmetic found it (`verified` / `degraded` / `broken`).
 
+**How to use it — just ask.** You are already running GRASP the moment the
+server is registered; there is nothing to invoke by hand. Ask the model in plain
+words and it reaches for the right verb — and every result comes back as one
+portable, glanceable card (box-drawing, no colour, offline-verifiable), the same
+shape in any harness:
+
+- **Record a decision** — before a consequential step: *"record this decision"*
+  → `grasp_record_decision` writes a signed IDR (what / why / how).
+- **Record a belief** — at a checkpoint: *"checkpoint what we believe"* →
+  `grasp_record_belief` snapshots the mental model into the signed memory chain.
+- **Prove a claim** — after any sourced assertion: *"prove that quote"* →
+  `grasp_prove_claim` verifies the quote is verbatim in its source; a fabricated
+  one returns `not_found` and cannot pass.
+- **Verify integrity** — any time: *"verify the chain"* → `grasp_verify`
+  re-checks every signature, the linkage, and the Merkle root offline.
+
+Prefer your own terminal? The same records verify with the Python package or the
+`tools/grasp-verify-receipt` script — no server, no network (see *Verify a
+receipt* below). Deeds, not words — *facta, non verba*.
+
 Records land in `~/.grasp/` (`idr.jsonl`, `context.jsonl`) — or wherever
 `GRASP_HOME` points — and re-verify with this package alone, no server and no
 network.

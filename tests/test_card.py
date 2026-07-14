@@ -79,3 +79,25 @@ def test_mcp_response_carries_card_text_and_structured_json():
     assert isinstance(result["structuredContent"], dict)
     assert result["structuredContent"].get("ok") is True
     assert result["isError"] is False
+
+
+def test_footer_carries_ethos_slogan():
+    """Every card closes on the ethos, on the border, within WIDTH, no ANSI."""
+    card = render_card("grasp_status", {"ok": True, "id": "x"})
+    last = card.splitlines()[-1]
+    assert last.startswith("╰")            # ethos rides the closing border
+    assert "facta, non verba" in last
+    assert len(last) <= WIDTH              # portability: never wider than a card
+    assert "\x1b" not in last              # portability: no ANSI in the ethos
+
+
+def test_model_and_honesty_render_when_present_and_absent_otherwise():
+    """Provider-honesty ledger fields render honestly — present when supplied,
+    never invented when absent (the card's honesty contract holds for them too)."""
+    lit = render_card("grasp_verify", {
+        "ok": True, "model": "grok-4-fast", "honesty": "failed_over",
+    })
+    assert "model" in lit and "grok-4-fast" in lit
+    assert "failed-over" in lit            # honesty value mapped to glyph-word
+    bare = render_card("grasp_verify", {"ok": True, "id": "n1"})
+    assert "honesty" not in bare and "model" not in bare

@@ -10,7 +10,8 @@ glanceable, consistent shape in ANY harness:
 - width-capped so narrow panes never wrap mid-box;
 - deterministic (same result dict -> byte-identical card);
 - honest: rows render only keys PRESENT in the result — the card never
-  invents fields.
+  invents fields;
+- every card closes on the ethos it enforces: facta, non verba.
 
 The full result dict still travels as MCP ``structuredContent`` — the
 card is for humans, the JSON for programs.
@@ -23,6 +24,8 @@ from typing import Any
 
 WIDTH = 62  # total card width incl. borders; safe in narrow TUI panes
 
+_ETHOS = "facta, non verba"  # deeds, not words — closes every card
+
 _TITLES = {
     "grasp_record_decision": "decision recorded",
     "grasp_record_belief": "belief recorded",
@@ -31,16 +34,26 @@ _TITLES = {
     "grasp_status": "status",
 }
 
-# Curated display order; anything else follows alphabetically.
+# Curated display order; anything else follows alphabetically. ``model``
+# and ``honesty`` render only when a result carries them (honest by
+# construction) — the provider-honesty ledger populates them downstream.
 _PREFERRED = (
-    "status", "verified", "grounding_rate", "quote", "claim",
-    "source_path", "source_sha256", "sha256", "id", "idr_id",
+    "status", "model", "verified", "honesty", "grounding_rate", "quote",
+    "claim", "source_path", "source_sha256", "sha256", "id", "idr_id",
     "context_id", "head", "depth", "ts", "entries", "count",
     "filed_safe",
 )
 _SKIP = {"ok", "error"}
 _MAX_ROWS = 10
 _HEXISH = re.compile(r"^(sha256:)?[0-9a-f]{16,}$")
+
+# Provider-honesty states (populated by the deterministic-floor
+# intervention): a glanceable glyph + word, never ANSI colour.
+_HONESTY = {
+    "honest": "● honest",
+    "floor_held": "◆ floor-held",
+    "failed_over": "✗ failed-over",
+}
 
 
 def _short(value: str) -> str:
@@ -59,6 +72,8 @@ def _bar(rate: float, slots: int = 10) -> str:
 def _fmt(key: str, value: Any) -> str:
     if key == "grounding_rate" and isinstance(value, (int, float)):
         return _bar(float(value))
+    if key == "honesty" and isinstance(value, str):
+        return _HONESTY.get(value, value)
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, str):
@@ -83,6 +98,13 @@ def _title_line(glyph: str, title: str) -> str:
     return head + "─" * (WIDTH - len(head) - 1) + "╮"
 
 
+def _footer_line() -> str:
+    # Mirrors _title_line: the ethos rides the closing border, so it adds
+    # no row, stays within WIDTH, and every card ends on facta, non verba.
+    head = f"╰─ {_ETHOS} "
+    return head + "─" * (WIDTH - len(head) - 1) + "╯"
+
+
 def _glyph(tool: str, result: dict) -> str:
     if not result.get("ok", False):
         return "✗"
@@ -105,5 +127,5 @@ def render_card(tool: str, result: dict) -> str:
 
     if not result.get("ok", False):
         lines.append(_row("error", str(result.get("error", "unknown"))))
-    lines.append("╰" + "─" * (WIDTH - 2) + "╯")
+    lines.append(_footer_line())
     return "\n".join(lines)
