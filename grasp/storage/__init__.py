@@ -59,6 +59,7 @@ _ADAPTERS: dict[str, tuple[str, str]] = {
     "s3": ("grasp.storage.s3", "S3Adapter"),
     "sepolia": ("grasp.storage.sepolia", "SepoliaAdapter"),
     "ipfs": ("grasp.storage.ipfs", "IPFSAdapter"),
+    "website": ("grasp.storage.website", "WebsiteAdapter"),
 }
 
 

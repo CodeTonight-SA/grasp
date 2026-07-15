@@ -39,8 +39,9 @@ class _Response(io.BytesIO):
 
 # ---------------------------------------------------------------- registry
 
-def test_all_five_backends_registered():
-    assert set(adapter_names()) == {"local", "bitcoin-ots", "s3", "sepolia", "ipfs"}
+def test_anchor_and_remote_backends_registered():
+    # exact whole-domain census lives in test_storage_website.py
+    assert {"local", "bitcoin-ots", "s3", "sepolia", "ipfs"} <= set(adapter_names())
 
 
 # ---------------------------------------------------------------- bitcoin-ots
