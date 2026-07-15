@@ -55,6 +55,10 @@ class StorageAdapter(Protocol):
 # name -> (module, class). Grown ONLY as adapters land end-to-end.
 _ADAPTERS: dict[str, tuple[str, str]] = {
     "local": ("grasp.storage.local", "LocalAdapter"),
+    "bitcoin-ots": ("grasp.storage.ots", "BitcoinOTSAdapter"),
+    "s3": ("grasp.storage.s3", "S3Adapter"),
+    "sepolia": ("grasp.storage.sepolia", "SepoliaAdapter"),
+    "ipfs": ("grasp.storage.ipfs", "IPFSAdapter"),
 }
 
 

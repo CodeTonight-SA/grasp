@@ -82,6 +82,11 @@ def test_probe_reports_not_ready_with_remedy(tmp_path):
 
 def test_probe_all_covers_every_registered_backend(monkeypatch, tmp_path):
     monkeypatch.setenv("GRASP_HOME", str(tmp_path))
+    # hermetic: ambient cloud credentials must never make tests network-probe
+    for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+                 "GRASP_S3_BUCKET", "GRASP_S3_ENDPOINT", "GRASP_SEPOLIA_SIGNER"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GRASP_IPFS_API", "http://127.0.0.1:1")  # closed port: instant refusal
     results = probe_all()
     assert [r.name for r in results] == list(adapter_names())
     assert all(isinstance(r, ProbeResult) for r in results)
