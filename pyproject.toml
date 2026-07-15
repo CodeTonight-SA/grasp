@@ -41,7 +41,7 @@ grasp-legal-receipt = "grasp.legal_receipt:main"
 grasp-mcp = "grasp.mcp_server:main"
 
 [tool.setuptools]
-packages = ["grasp"]
+packages = ["grasp", "grasp.storage"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

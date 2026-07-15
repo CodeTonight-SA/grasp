@@ -218,6 +218,38 @@ out = forest_inclusion_proof(forest, node_id)
 assert verify_forest_inclusion(out["content_addr"], out["proof"], out["forest_root"])
 ```
 
+## Activate a deployment
+
+`grasp activate` walks three acts and closes on the chain's birth certificate:
+
+1. **Tier** — `public` (records may be published), `private` (zero-egress by
+   construction: egress-capable backends are refused outright and the storage
+   self-check runs under an in-process socket blocker), or `combination`
+   (records stay private; only content hashes go to public witnesses).
+2. **Storage** — a live-probed picker over the six built-in backends (local,
+   bitcoin-ots, s3, sepolia, ipfs, website). Every probe is a real check with
+   a one-line remedy when a runtime dependency is missing — never a greyed
+   "coming soon".
+3. **Terms + access** — activation refuses until the install's license/terms
+   files are accepted; acceptance is a signed record bound to each file's
+   sha256, so changed terms honestly demand re-acceptance. Private and
+   combination modes collect a signed visibility allowlist and report whether
+   a PII-redaction seam is wired (`GRASP_REDACTION_CMD`).
+
+```text
+╭─ GRASP ● activated — chain born ───────────────────────────╮
+│ id         precog-1784069403-…                             │
+│ mode       private                                         │
+│ acl        true                                            │
+│ backends   local                                           │
+│ count      1                                               │
+╰─ facta, non verba ─────────────────────────────────────────╯
+```
+
+The activation itself is the deployment's first signed decision record — the
+zero-telemetry claim ships with its own falsifier (`egress_guard()`), not an
+adjective.
+
 ## Shipped here vs. deployment concerns
 
 Shipped in this package: the three legs, their composition, RFC-6962 Merkle
