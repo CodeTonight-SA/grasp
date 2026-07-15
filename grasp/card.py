@@ -32,6 +32,7 @@ _TITLES = {
     "grasp_prove_claim": "prove claim",
     "grasp_verify": "chain verify",
     "grasp_status": "status",
+    "grasp_activate": "activated — chain born",
 }
 
 # Curated display order; anything else follows alphabetically. ``model``
