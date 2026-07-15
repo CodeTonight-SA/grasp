@@ -33,15 +33,18 @@ _TITLES = {
     "grasp_verify": "chain verify",
     "grasp_status": "status",
     "grasp_activate": "activated — chain born",
+    "grasp_footer": "prove-it — this response",
+    "grasp_honesty": "provider honesty — floor-hold scoreboard",
+    "grasp_attest": "self-attestation — grasp proves grasp",
 }
 
 # Curated display order; anything else follows alphabetically. ``model``
 # and ``honesty`` render only when a result carries them (honest by
 # construction) — the provider-honesty ledger populates them downstream.
 _PREFERRED = (
-    "status", "model", "verified", "honesty", "grounding_rate", "quote",
-    "claim", "source_path", "source_sha256", "sha256", "id", "idr_id",
-    "context_id", "head", "depth", "ts", "entries", "count",
+    "status", "model", "verified", "claims", "honesty", "grounding_rate",
+    "grounding", "quote", "claim", "source_path", "source_sha256", "sha256",
+    "id", "idr_id", "context_id", "head", "depth", "ts", "entries", "count",
     "filed_safe",
 )
 _SKIP = {"ok", "error"}
@@ -71,8 +74,8 @@ def _bar(rate: float, slots: int = 10) -> str:
 
 
 def _fmt(key: str, value: Any) -> str:
-    if key == "grounding_rate" and isinstance(value, (int, float)):
-        return _bar(float(value))
+    if key in ("grounding_rate", "grounding") and isinstance(value, (int, float)):
+        return _bar(float(value))  # "grounding" fits the 11-col label field
     if key == "honesty" and isinstance(value, str):
         return _HONESTY.get(value, value)
     if isinstance(value, bool):
@@ -109,24 +112,34 @@ def _footer_line() -> str:
 def _glyph(tool: str, result: dict) -> str:
     if not result.get("ok", False):
         return "✗"
-    if tool == "grasp_prove_claim":
+    if tool in ("grasp_prove_claim", "grasp_footer") and "verified" in result:
         return "✓" if result.get("verified") else "✗"
     return "●"
 
 
+def compose_card(title: str, rows: list[tuple[str, str]], *,
+                 glyph: str = "●") -> str:
+    """Assemble a card from PRE-ORDERED (label, value) rows — for surfaces
+    whose display order is data-driven (a ranked scoreboard) where dict-key
+    ordering cannot express rank. The caller owns row capping."""
+    lines = [_title_line(glyph, title)]
+    lines.extend(_row(label, value) for label, value in rows)
+    lines.append(_footer_line())
+    return "\n".join(lines)
+
+
+def bar(rate: float) -> str:
+    """The grounding/hold-rate bar, public — one bar shape everywhere."""
+    return _bar(rate)
+
+
 def render_card(tool: str, result: dict) -> str:
     """One portable card for one tool result. Pure + deterministic."""
-    glyph = _glyph(tool, result)
-    title = _TITLES.get(tool, tool)
-    lines = [_title_line(glyph, title)]
-
     keys = [k for k in _PREFERRED if k in result]
     keys += sorted(k for k in result
                    if k not in _PREFERRED and k not in _SKIP)
-    for key in keys[:_MAX_ROWS]:
-        lines.append(_row(key, _fmt(key, result[key])))
-
+    rows = [(key, _fmt(key, result[key])) for key in keys[:_MAX_ROWS]]
     if not result.get("ok", False):
-        lines.append(_row("error", str(result.get("error", "unknown"))))
-    lines.append(_footer_line())
-    return "\n".join(lines)
+        rows.append(("error", str(result.get("error", "unknown"))))
+    return compose_card(_TITLES.get(tool, tool), rows,
+                        glyph=_glyph(tool, result))

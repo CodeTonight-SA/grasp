@@ -250,6 +250,46 @@ The activation itself is the deployment's first signed decision record — the
 zero-telemetry claim ships with its own falsifier (`egress_guard()`), not an
 adjective.
 
+## Per-response prove-it footer
+
+A response whose claims are bound to sources (`[[cite:ID]]`) can close on a
+compact provenance card — the moat proving the model's own claims, every
+turn. Three modes (`salient` default, `always`, `off`); the fineprint rows
+are plain URLs, so modern terminals link them with zero escape codes, and
+`grasp open <id>` is the fallback:
+
+```text
+╭─ GRASP ✓ prove-it — this response ─────────────────────────╮
+│ model      ◆ claude-fable-5                                │
+│ verified   true                                            │
+│ claims     2 — ✓2 ≈0 ✗0                                    │
+│ grounding  ██████████ 1.00                                 │
+╰─ facta, non verba ─────────────────────────────────────────╯
+┆ inspect  file:///…/prove-it/41e3e9c8bc90.html
+┆ or run   grasp open 41e3e9c8bc90
+```
+
+A fabricated quote cannot pass: it renders ✗ and flips the card's glyph.
+
+## Provider honesty — the floor that refuses to lie
+
+When a provider's salient claims fail the deterministic floor, GRASP blocks
+the send, fails over down your provider ladder (nothing unproven is ever
+emitted), and records a signed event in the PRIVATE honesty ledger.
+`grasp honesty` renders the scoreboard; `grasp attest` re-proves the
+deployment's own configuration guarantees and exits non-zero if any fails:
+
+```text
+╭─ GRASP ● provider honesty — floor-hold scoreboard ─────────╮
+│ ●          ██████████ 1.00  gemini-3.1-pro  ✓1 ✗0          │
+│ ✗          ░░░░░░░░░░ 0.00  grok-4  ✓0 ✗1                  │
+╰─ facta, non verba ─────────────────────────────────────────╯
+```
+
+The public "flagged providers" view exists but ships OFF by construction —
+it activates only behind an enterprise switch AND a legal acknowledgement
+file, and a test pins that default.
+
 ## Shipped here vs. deployment concerns
 
 Shipped in this package: the three legs, their composition, RFC-6962 Merkle
