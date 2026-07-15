@@ -99,6 +99,34 @@ def _cmd_activate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_honesty(args: argparse.Namespace) -> int:
+    """The private provider-honesty scoreboard (operator/admin surface)."""
+    from grasp.honesty import public_shame_card, scoreboard, scoreboard_card
+    if args.json:
+        print(json.dumps(scoreboard(), sort_keys=True))
+        return 0
+    print(scoreboard_card())
+    shame = public_shame_card()
+    if shame:
+        print()
+        print(shame)
+    return 0
+
+
+def _cmd_attest(args: argparse.Namespace) -> int:
+    """GRASP proves GRASP — re-verify this deployment's own configuration.
+    Exit 0 only when every check holds, so cron/CI can gate on it."""
+    from grasp.honesty import self_attestation
+    root = Path(args.licenses_root) if args.licenses_root else _default_licenses_root()
+    result = self_attestation(root)
+    if args.json:
+        print(json.dumps(result, sort_keys=True))
+    else:
+        from grasp.card import render_card
+        print(render_card("grasp_attest", result))
+    return 0 if result.get("attested") else 1
+
+
 def _cmd_open(args: argparse.Namespace) -> int:
     """Open a per-response prove-it artifact by (prefix of) its id — the
     footer's fallback when a terminal does not auto-link the fineprint URL."""
@@ -118,15 +146,7 @@ def _cmd_open(args: argparse.Namespace) -> int:
     return 0
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="grasp",
-        description=(
-            f"GRASP {SERVER_NAME} {SERVER_VERSION} — offline provenance "
-            "verification: the arithmetic is the judge, never the agent."
-        ),
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
+def _add_ledger_commands(sub) -> None:
     verify = sub.add_parser(
         "verify",
         help="re-verify the whole ledger offline; exit non-zero if BROKEN",
@@ -139,6 +159,9 @@ def _build_parser() -> argparse.ArgumentParser:
     status.add_argument("--json", action="store_true",
                         help="single-line JSON (default: pretty)")
     status.set_defaults(func=_cmd_status)
+
+
+def _add_activation_commands(sub) -> None:
     activate = sub.add_parser(
         "activate",
         help="three-act activation wizard: tier, storage backends, terms")
@@ -158,6 +181,38 @@ def _build_parser() -> argparse.ArgumentParser:
     open_cmd.add_argument("--no-browser", action="store_true",
                           help="print the path only; do not launch a browser")
     open_cmd.set_defaults(func=_cmd_open)
+
+
+def _add_honesty_commands(sub) -> None:
+    honesty = sub.add_parser(
+        "honesty",
+        help="provider floor-hold scoreboard from the private honesty ledger")
+    honesty.add_argument("--json", action="store_true",
+                         help="single-line JSON (default: card)")
+    honesty.set_defaults(func=_cmd_honesty)
+    attest = sub.add_parser(
+        "attest",
+        help="self-attestation: prove this deployment abides by its own "
+             "configuration; exit non-zero if any check fails")
+    attest.add_argument("--json", action="store_true",
+                        help="single-line JSON (default: card)")
+    attest.add_argument("--licenses-root", metavar="PATH",
+                        help="directory holding the accepted terms files")
+    attest.set_defaults(func=_cmd_attest)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="grasp",
+        description=(
+            f"GRASP {SERVER_NAME} {SERVER_VERSION} — offline provenance "
+            "verification: the arithmetic is the judge, never the agent."
+        ),
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+    _add_ledger_commands(sub)
+    _add_activation_commands(sub)
+    _add_honesty_commands(sub)
     return parser
 
 

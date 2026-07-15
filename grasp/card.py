@@ -34,6 +34,8 @@ _TITLES = {
     "grasp_status": "status",
     "grasp_activate": "activated — chain born",
     "grasp_footer": "prove-it — this response",
+    "grasp_honesty": "provider honesty — floor-hold scoreboard",
+    "grasp_attest": "self-attestation — grasp proves grasp",
 }
 
 # Curated display order; anything else follows alphabetically. ``model``
@@ -115,19 +117,29 @@ def _glyph(tool: str, result: dict) -> str:
     return "●"
 
 
+def compose_card(title: str, rows: list[tuple[str, str]], *,
+                 glyph: str = "●") -> str:
+    """Assemble a card from PRE-ORDERED (label, value) rows — for surfaces
+    whose display order is data-driven (a ranked scoreboard) where dict-key
+    ordering cannot express rank. The caller owns row capping."""
+    lines = [_title_line(glyph, title)]
+    lines.extend(_row(label, value) for label, value in rows)
+    lines.append(_footer_line())
+    return "\n".join(lines)
+
+
+def bar(rate: float) -> str:
+    """The grounding/hold-rate bar, public — one bar shape everywhere."""
+    return _bar(rate)
+
+
 def render_card(tool: str, result: dict) -> str:
     """One portable card for one tool result. Pure + deterministic."""
-    glyph = _glyph(tool, result)
-    title = _TITLES.get(tool, tool)
-    lines = [_title_line(glyph, title)]
-
     keys = [k for k in _PREFERRED if k in result]
     keys += sorted(k for k in result
                    if k not in _PREFERRED and k not in _SKIP)
-    for key in keys[:_MAX_ROWS]:
-        lines.append(_row(key, _fmt(key, result[key])))
-
+    rows = [(key, _fmt(key, result[key])) for key in keys[:_MAX_ROWS]]
     if not result.get("ok", False):
-        lines.append(_row("error", str(result.get("error", "unknown"))))
-    lines.append(_footer_line())
-    return "\n".join(lines)
+        rows.append(("error", str(result.get("error", "unknown"))))
+    return compose_card(_TITLES.get(tool, tool), rows,
+                        glyph=_glyph(tool, result))

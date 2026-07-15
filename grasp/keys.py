@@ -14,11 +14,34 @@ Resolution order:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import os
 import secrets
 from pathlib import Path
 
 from grasp.home import grasp_home
+
+
+def signed_record(body: dict, home: Path | None = None) -> dict:
+    """Sign a record body with the deployment key: HMAC-SHA256 over the
+    canonical JSON, plus a short key fingerprint. The shared shape for
+    license acceptances, visibility ACLs, and honesty-ledger events."""
+    key = signing_key(home)
+    payload = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    return {**body,
+            "fingerprint": hashlib.sha256(key).hexdigest()[:16],
+            "sig": hmac.new(key, payload.encode("utf-8"),
+                            hashlib.sha256).hexdigest()}
+
+
+def verify_record(record: dict, home: Path | None = None) -> bool:
+    """True iff the record's signature matches its body under this
+    deployment's key — the read-side half of :func:`signed_record`."""
+    body = {k: v for k, v in record.items() if k not in ("fingerprint", "sig")}
+    expected = signed_record(body, home)
+    return hmac.compare_digest(record.get("sig", ""), expected["sig"])
 
 
 def signing_key(home: Path | None = None) -> bytes:

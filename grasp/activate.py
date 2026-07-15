@@ -95,6 +95,8 @@ def _acceptance_path(home: Path | None = None) -> Path:
 
 
 def _signed(body: dict, home: Path | None = None) -> dict:
+    # same shape as grasp.keys.signed_record (the public shim newer
+    # callers use); folding this into it is a contained follow-up
     key = signing_key(home)
     payload = json.dumps(body, sort_keys=True, separators=(",", ":"))
     return {**body,
