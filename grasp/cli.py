@@ -17,6 +17,7 @@ Run::
 
     grasp verify          # exit 0 = VERIFIED, non-zero = BROKEN
     grasp status
+    grasp activate        # three-act activation wizard (tier/storage/terms)
     python -m grasp.cli verify   # equivalent (no install)
 """
 from __future__ import annotations
@@ -24,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from grasp.mcp_server import SERVER_NAME, SERVER_VERSION, tool_status, tool_verify
 
@@ -67,6 +69,36 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0 if out.get("ok") else 1
 
 
+def _default_licenses_root() -> Path:
+    """Where the install's terms live: the checkout root when running from
+    a git tree or editable install, else the current directory (wheel
+    installs point ``--licenses-root`` at their terms explicitly)."""
+    from grasp.activate import license_files
+    checkout = Path(__file__).resolve().parent.parent
+    return checkout if license_files(checkout) else Path.cwd()
+
+
+def _cmd_activate(args: argparse.Namespace) -> int:
+    # Lazy import: the wizard pulls the storage adapters; `grasp verify`
+    # must stay importable even if an adapter dependency misbehaves.
+    from grasp.activate import ActivationError
+    from grasp.wizard import WizardCancelled, WizardIO, run_wizard
+
+    root = Path(args.licenses_root) if args.licenses_root else _default_licenses_root()
+    home = Path(args.home) if args.home else None
+    try:
+        run_wizard(WizardIO(), licenses_root=root, home=home)
+    except WizardCancelled:
+        return 1  # the wizard already told the operator why
+    except ActivationError as exc:
+        print(f"Activation refused: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\nActivation interrupted.", file=sys.stderr)
+        return 130
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="grasp",
@@ -88,6 +120,17 @@ def _build_parser() -> argparse.ArgumentParser:
     status.add_argument("--json", action="store_true",
                         help="single-line JSON (default: pretty)")
     status.set_defaults(func=_cmd_status)
+    activate = sub.add_parser(
+        "activate",
+        help="three-act activation wizard: tier, storage backends, terms")
+    activate.add_argument(
+        "--licenses-root", metavar="PATH",
+        help="directory holding the LICENSE*/TERMS* files to accept "
+             "(default: the install root, else the current directory)")
+    activate.add_argument(
+        "--home", metavar="PATH",
+        help="GRASP state directory (default: $GRASP_HOME or ~/.grasp)")
+    activate.set_defaults(func=_cmd_activate)
     return parser
 
 
