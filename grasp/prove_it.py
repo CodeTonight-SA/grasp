@@ -169,6 +169,7 @@ def _esc(s: str) -> str:
 _HEADING_RE = re.compile(r"^(#{1,4})\s+(.*)$")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _CITE_RE = re.compile(r"\[\[cite:([^\]]+)\]\]")
+CITE_RE = _CITE_RE  # public alias: the [[cite:ID]] token IS the salience scope
 
 
 def _inline(text: str, idx: dict) -> str:

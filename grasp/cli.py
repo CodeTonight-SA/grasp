@@ -99,6 +99,25 @@ def _cmd_activate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_open(args: argparse.Namespace) -> int:
+    """Open a per-response prove-it artifact by (prefix of) its id — the
+    footer's fallback when a terminal does not auto-link the fineprint URL."""
+    from grasp.footer import artifact_dir
+
+    directory = artifact_dir()
+    matches = sorted(directory.glob(f"{args.artifact_id}*.html"))
+    if not matches:
+        print(f"no prove-it artifact matching {args.artifact_id!r} under "
+              f"{directory}", file=sys.stderr)
+        return 1
+    path = matches[0]
+    print(path)
+    if not args.no_browser:
+        import webbrowser
+        webbrowser.open(path.as_uri())
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="grasp",
@@ -131,6 +150,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--home", metavar="PATH",
         help="GRASP state directory (default: $GRASP_HOME or ~/.grasp)")
     activate.set_defaults(func=_cmd_activate)
+    open_cmd = sub.add_parser(
+        "open",
+        help="open a per-response prove-it artifact by id (footer fallback)")
+    open_cmd.add_argument("artifact_id",
+                          help="artifact id (or unique prefix) from the footer")
+    open_cmd.add_argument("--no-browser", action="store_true",
+                          help="print the path only; do not launch a browser")
+    open_cmd.set_defaults(func=_cmd_open)
     return parser
 
 

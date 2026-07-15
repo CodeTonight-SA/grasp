@@ -33,15 +33,16 @@ _TITLES = {
     "grasp_verify": "chain verify",
     "grasp_status": "status",
     "grasp_activate": "activated — chain born",
+    "grasp_footer": "prove-it — this response",
 }
 
 # Curated display order; anything else follows alphabetically. ``model``
 # and ``honesty`` render only when a result carries them (honest by
 # construction) — the provider-honesty ledger populates them downstream.
 _PREFERRED = (
-    "status", "model", "verified", "honesty", "grounding_rate", "quote",
-    "claim", "source_path", "source_sha256", "sha256", "id", "idr_id",
-    "context_id", "head", "depth", "ts", "entries", "count",
+    "status", "model", "verified", "claims", "honesty", "grounding_rate",
+    "grounding", "quote", "claim", "source_path", "source_sha256", "sha256",
+    "id", "idr_id", "context_id", "head", "depth", "ts", "entries", "count",
     "filed_safe",
 )
 _SKIP = {"ok", "error"}
@@ -71,8 +72,8 @@ def _bar(rate: float, slots: int = 10) -> str:
 
 
 def _fmt(key: str, value: Any) -> str:
-    if key == "grounding_rate" and isinstance(value, (int, float)):
-        return _bar(float(value))
+    if key in ("grounding_rate", "grounding") and isinstance(value, (int, float)):
+        return _bar(float(value))  # "grounding" fits the 11-col label field
     if key == "honesty" and isinstance(value, str):
         return _HONESTY.get(value, value)
     if isinstance(value, bool):
@@ -109,7 +110,7 @@ def _footer_line() -> str:
 def _glyph(tool: str, result: dict) -> str:
     if not result.get("ok", False):
         return "✗"
-    if tool == "grasp_prove_claim":
+    if tool in ("grasp_prove_claim", "grasp_footer") and "verified" in result:
         return "✓" if result.get("verified") else "✗"
     return "●"
 
