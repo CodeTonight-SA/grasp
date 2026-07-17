@@ -89,7 +89,7 @@ roots are anchored into the **public Bitcoin blockchain**, independently
 checkable on any explorer:
 
 - Pilot decision chain — committed via an OpenTimestamps proof to block
-  **953968**: <https://mempool.space/block/953968>
+  **956992**: <https://mempool.space/block/956992>
 - Post-quantum finance pilot (Ed25519 + ML-DSA-65) — dual-signed and anchored
   via the same OpenTimestamps path; its anchor block details are shared in
   evaluation materials on request rather than listed here.

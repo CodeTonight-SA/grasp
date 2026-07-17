@@ -4,7 +4,7 @@ Anchor-first backend: record blobs persist locally (composes
 ``LocalAdapter`` — "records live locally; roots witness externally"), and
 ``anchor`` commits the Merkle root via the upstream ``ots`` client — the
 same deployment step the README documents ("not our code at all"). The
-proven path: pilot chains anchored in real Bitcoin blocks (953968 et al.).
+proven path: pilot chains anchored in real Bitcoin blocks (956992 et al.).
 
 Runtime dependency, honestly detected: the ``ots`` CLI
 (``pipx install opentimestamps-client``). ``probe()`` reports it live.
