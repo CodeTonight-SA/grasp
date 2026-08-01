@@ -50,6 +50,7 @@ import shutil
 import subprocess
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -131,7 +132,27 @@ def _describe_error(exc: Exception) -> str:
         return f"response is missing the field {exc}"
     if isinstance(exc, TimeoutError):
         return "timed out"
+    if isinstance(exc, ValueError):
+        # Our own refusals (a non-https source) land here. The message is
+        # already credential-safe via _safe_url_label, and "ValueError" alone
+        # would tell an operator nothing about what was rejected or why.
+        return str(exc)
     return type(exc).__name__
+
+
+def _safe_url_label(url: str) -> str:
+    """Scheme and host only — never the raw URL, in any message.
+
+    A URL can carry credentials in its userinfo (``https://user:token@host/``),
+    so echoing even a truncated prefix can put a secret into an error string or
+    a returned ``error`` field. ``urlsplit().hostname`` drops userinfo by
+    construction, which is the property we want rather than a hand-rolled
+    regex over something this easy to get wrong."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return "<unparseable url>"
+    return f"{parts.scheme or '?'}://{parts.hostname or '?'}"
 
 
 class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
@@ -146,8 +167,9 @@ class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if not newurl.startswith(_ALLOWED_SOURCE_SCHEME):
             raise urllib.error.HTTPError(
-                newurl, code, f"refusing a redirect to {newurl[:40]!r} — header "
-                f"sources must stay {_ALLOWED_SOURCE_SCHEME}…", headers, fp)
+                newurl, code, "refusing a redirect to "
+                f"{_safe_url_label(newurl)} — header sources must stay "
+                f"{_ALLOWED_SOURCE_SCHEME}…", headers, fp)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -157,7 +179,7 @@ _OPENER = urllib.request.build_opener(_HttpsOnlyRedirects)
 def _http_get(url: str, timeout: float) -> str:
     if not url.startswith(_ALLOWED_SOURCE_SCHEME):
         raise ValueError(f"header sources must be {_ALLOWED_SOURCE_SCHEME}… — "
-                         f"refusing {url[:40]!r}")
+                         f"refusing {_safe_url_label(url)}")
     req = urllib.request.Request(url, headers={"User-Agent": "grasp-ots/1"})
     with _OPENER.open(req, timeout=timeout) as resp:  # noqa: S310
         return resp.read().decode("utf-8", "replace").strip()

@@ -261,6 +261,19 @@ def test_https_survives_a_redirect_not_just_the_first_hop():
             None, 302, "Found", {}, "http://169.254.169.254/latest/meta-data/")
 
 
+def test_a_refusal_never_echoes_credentials_from_the_url():
+    """A source URL can carry credentials in its userinfo. Echoing even a
+    truncated prefix would put the secret into the returned error field."""
+    secret = "https://user:sup3rs3cret@evil.internal/api/{height}"
+    answer = ots_mod.fetch_block_header(
+        ("x", secret.replace("https", "http"), secret), 957120)
+    assert answer["ok"] is False
+    assert "sup3rs3cret" not in answer["error"]
+    assert "user:" not in answer["error"]
+    # the host is still named, so the failure stays diagnosable
+    assert "evil.internal" in answer["error"]
+
+
 def test_an_https_redirect_is_still_followed():
     """The guard must not break ordinary redirects between https hosts."""
     handler = ots_mod._HttpsOnlyRedirects()
