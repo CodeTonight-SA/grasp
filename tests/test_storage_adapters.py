@@ -274,6 +274,20 @@ def test_a_refusal_never_echoes_credentials_from_the_url():
     assert "evil.internal" in answer["error"]
 
 
+def test_a_refused_redirect_reports_the_reason_not_a_status_code():
+    """The refusal is raised as an HTTPError so urllib unwinds properly, but
+    describing it as one would surface a security block as a bland 'HTTP 302'
+    and the operator would never learn a redirect was refused."""
+    refusal = ots_mod._RefusedRedirect(
+        "http://evil.internal/", 302,
+        "refusing a redirect to http://evil.internal — header sources must "
+        "stay https://…", {}, None)
+    described = ots_mod._describe_error(refusal)
+    assert "refusing a redirect" in described and described != "HTTP 302"
+    genuine = urllib.error.HTTPError("https://x/", 503, "busy", {}, None)
+    assert ots_mod._describe_error(genuine) == "HTTP 503"
+
+
 def test_an_https_redirect_is_still_followed():
     """The guard must not break ordinary redirects between https hosts."""
     handler = ots_mod._HttpsOnlyRedirects()

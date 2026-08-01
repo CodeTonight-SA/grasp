@@ -122,6 +122,12 @@ def _budget(cap: float, deadline: float | None) -> float:
 
 def _describe_error(exc: Exception) -> str:
     """Say WHY a source failed, so a changed API is not read as an outage."""
+    if isinstance(exc, _RefusedRedirect):
+        # Ours, not the server's. Reporting it as the redirect's status code
+        # ("HTTP 302") would hide a security refusal behind an ordinary-looking
+        # response, so the reason is kept. Must stay ABOVE the HTTPError
+        # branch, which this subclasses.
+        return str(exc.reason)
     if isinstance(exc, urllib.error.HTTPError):
         return f"HTTP {exc.code}"
     if isinstance(exc, urllib.error.URLError):
@@ -155,6 +161,14 @@ def _safe_url_label(url: str) -> str:
     return f"{parts.scheme or '?'}://{parts.hostname or '?'}"
 
 
+class _RefusedRedirect(urllib.error.HTTPError):
+    """Our own refusal, distinguishable from a status the server really sent.
+
+    It has to BE an HTTPError so urllib's machinery unwinds correctly, but
+    reporting it like one would surface a security block as a bland
+    "HTTP 302". The separate type is what lets the reason reach the caller."""
+
+
 class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
     """Hold the https guarantee across redirects, not just at the first hop.
 
@@ -166,7 +180,7 @@ class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if not newurl.startswith(_ALLOWED_SOURCE_SCHEME):
-            raise urllib.error.HTTPError(
+            raise _RefusedRedirect(
                 newurl, code, "refusing a redirect to "
                 f"{_safe_url_label(newurl)} — header sources must stay "
                 f"{_ALLOWED_SOURCE_SCHEME}…", headers, fp)
