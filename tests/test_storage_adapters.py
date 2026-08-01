@@ -22,6 +22,7 @@ import pytest
 
 from grasp.storage import adapter_names
 from grasp.storage.ipfs import IPFSAdapter, _multipart
+from grasp.storage import ots as ots_mod
 from grasp.storage.ots import BitcoinOTSAdapter
 from grasp.storage.s3 import S3Adapter, derive_signing_key
 from grasp.storage.sepolia import SepoliaAdapter
@@ -79,6 +80,175 @@ def test_ots_anchor_none_when_stamp_fails(monkeypatch, tmp_path):
         "grasp.storage.ots.subprocess.run",
         lambda argv, **kw: subprocess.CompletedProcess(argv, 1, stdout="", stderr="boom"))
     assert BitcoinOTSAdapter(root=tmp_path).anchor(ROOT64) is None
+
+
+# -- anchor verification: did the root actually land in a Bitcoin block? -----
+#
+# Falsifiers each test enforces: a verdict that reads "confirmed" without
+# naming which tier produced it lets header agreement pass as a full node; a
+# single responding source is trust rather than corroboration; out-voting a
+# disagreeing source would confirm a header nobody agrees on; accepting a
+# merkleroot the real block does not carry would confirm a forged proof; and a
+# per-request timeout inside the attestation loop would let one slow source
+# multiply the caller's whole budget.
+
+def _stub_ots(monkeypatch, present=True):
+    monkeypatch.setattr("grasp.storage.ots.shutil.which",
+                        lambda _: "/usr/bin/ots" if present else None)
+
+
+def _stub_proof(tmp_path, root=ROOT64):
+    """Put a proof on disk exactly where anchor() would have left it."""
+    adapter = BitcoinOTSAdapter(root=tmp_path)
+    root_file, proof = adapter._proof_path(root)
+    root_file.parent.mkdir(parents=True, exist_ok=True)
+    root_file.write_text(root + "\n", encoding="utf-8")
+    proof.write_bytes(b"proof-bytes")
+    return adapter
+
+
+def _header(source, block_hash="ab" * 32, merkleroot="cd" * 32, time=1783480961):
+    return {"source": source, "ok": True, "block_hash": block_hash,
+            "merkleroot": merkleroot, "time": time}
+
+
+TWO_SOURCES = (("a", "{height}", "{block_hash}"), ("b", "{height}", "{block_hash}"))
+
+
+def test_ots_verify_unconfirmed_without_a_proof_on_disk(monkeypatch, tmp_path):
+    _stub_ots(monkeypatch)
+    verdict = BitcoinOTSAdapter(root=tmp_path).verify(ROOT64)
+    assert verdict.confirmed is False
+    assert "no proof on disk" in verdict.detail
+
+
+def test_ots_verify_unconfirmed_without_the_client(monkeypatch, tmp_path):
+    _stub_ots(monkeypatch, present=False)
+    verdict = BitcoinOTSAdapter(root=tmp_path).verify(ROOT64)
+    assert verdict.confirmed is False
+    assert verdict.verified_by is None
+
+
+def test_ots_verify_pending_proof_says_so(monkeypatch, tmp_path):
+    """A calendar commitment is not yet a block. Saying 'unconfirmed' without
+    that distinction would read as failure rather than 'not yet'."""
+    _stub_ots(monkeypatch)
+    adapter = _stub_proof(tmp_path)
+    monkeypatch.setattr(BitcoinOTSAdapter, "_verify_via_node",
+                        lambda *a, **k: None)
+    monkeypatch.setattr(BitcoinOTSAdapter, "_attested_heights",
+                        lambda *a, **k: [])
+    verdict = adapter.verify(ROOT64, header_sources=TWO_SOURCES)
+    assert verdict.confirmed is False
+    assert "no Bitcoin attestation yet" in verdict.detail
+
+
+def test_ots_verify_node_tier_is_marked_trustless(monkeypatch, tmp_path):
+    _stub_ots(monkeypatch)
+    adapter = _stub_proof(tmp_path)
+    monkeypatch.setattr(
+        "grasp.storage.ots.subprocess.run",
+        lambda argv, **kw: subprocess.CompletedProcess(
+            argv, 0, stdout="Success! Bitcoin block 957120 attests existence",
+            stderr=""))
+    verdict = adapter.verify(ROOT64, bitcoin_node="http://node/")
+    assert verdict.confirmed is True
+    assert verdict.verified_by == "bitcoin-node"
+    assert verdict.block == 957120
+    assert verdict.trust == ots_mod._TRUST_NODE
+
+
+def test_ots_verify_header_tier_states_its_trust(monkeypatch, tmp_path):
+    """A pass must name the tier and its assumption — never a bare 'confirmed'."""
+    _stub_ots(monkeypatch)
+    adapter = _stub_proof(tmp_path)
+    monkeypatch.setattr(BitcoinOTSAdapter, "_verify_via_node", lambda *a, **k: None)
+    monkeypatch.setattr(BitcoinOTSAdapter, "_attested_heights",
+                        lambda *a, **k: [(957120, "cd" * 32)])
+    monkeypatch.setattr("grasp.storage.ots.fetch_block_header",
+                        lambda s, h, t=15, *, deadline=None: _header(s[0]))
+    verdict = adapter.verify(ROOT64, header_sources=TWO_SOURCES)
+    assert verdict.confirmed is True
+    assert verdict.verified_by == "multi-source-header"
+    assert verdict.block == 957120
+    assert verdict.block_hash == "ab" * 32
+    assert "NOT a local full node" in verdict.trust
+    assert verdict.sources == ("a", "b")
+
+
+def test_ots_verify_refuses_a_merkleroot_mismatch(monkeypatch, tmp_path):
+    """The forgery vector: the proof commits to a root the real block does not
+    carry. Confirming that would make the whole anchor worthless."""
+    _stub_ots(monkeypatch)
+    adapter = _stub_proof(tmp_path)
+    monkeypatch.setattr(BitcoinOTSAdapter, "_verify_via_node", lambda *a, **k: None)
+    monkeypatch.setattr(BitcoinOTSAdapter, "_attested_heights",
+                        lambda *a, **k: [(957120, "11" * 32)])
+    monkeypatch.setattr("grasp.storage.ots.fetch_block_header",
+                        lambda s, h, t=15, *, deadline=None:
+                        _header(s[0], merkleroot="99" * 32))
+    verdict = adapter.verify(ROOT64, header_sources=TWO_SOURCES)
+    assert verdict.confirmed is False
+    assert "MISMATCH" in verdict.detail
+
+
+def test_ots_verify_header_tier_can_be_refused(monkeypatch, tmp_path):
+    """Requiring a node is a supported stance, and must not silently downgrade."""
+    _stub_ots(monkeypatch)
+    adapter = _stub_proof(tmp_path)
+    monkeypatch.setattr(BitcoinOTSAdapter, "_verify_via_node", lambda *a, **k: None)
+    verdict = adapter.verify(ROOT64, header_sources=())
+    assert verdict.confirmed is False
+    assert "disabled" in verdict.detail
+
+
+def test_single_source_is_not_agreement(monkeypatch):
+    monkeypatch.setattr(
+        "grasp.storage.ots.fetch_block_header",
+        lambda s, h, t=15, *, deadline=None:
+        _header("a") if s[0] == "a" else {"source": s[0], "ok": False,
+                                          "error": "unreachable (stub)"})
+    out = ots_mod.agree_on_block_header(957120, sources=TWO_SOURCES)
+    assert out["agreed"] is False
+    assert "agreeing sources are required" in out["reason"]
+
+
+def test_disagreeing_sources_are_refused_not_out_voted(monkeypatch):
+    """Two agree and one differs. A majority vote accepts this; exact
+    agreement must not."""
+    three = TWO_SOURCES + (("c", "{height}", "{block_hash}"),)
+    roots = {"a": "11" * 32, "b": "11" * 32, "c": "99" * 32}
+    monkeypatch.setattr("grasp.storage.ots.fetch_block_header",
+                        lambda s, h, t=15, *, deadline=None:
+                        _header(s[0], merkleroot=roots[s[0]]))
+    out = ots_mod.agree_on_block_header(957120, sources=three)
+    assert out["agreed"] is False
+    assert "DISAGREE" in out["reason"]
+
+
+def test_a_changed_api_is_distinguishable_from_an_outage(monkeypatch):
+    """A source that answers but renamed its fields is BROKEN, not merely down."""
+    monkeypatch.setattr(
+        "grasp.storage.ots._http_get",
+        lambda url, timeout: "ab" * 32 if "height" in url
+        else '{"mrkl_root": "x", "timestamp": 1}')
+    answer = ots_mod.fetch_block_header(
+        ("s", "https://x/height/{height}", "https://x/b/{block_hash}"), 957120)
+    assert answer["ok"] is False
+    assert "missing the field" in answer["error"] and "merkle_root" in answer["error"]
+
+
+def test_spent_budget_issues_no_http_request(monkeypatch):
+    """The caller's timeout budgets the WHOLE check. Sources are queried once
+    per attestation, so a per-request timeout would multiply total latency."""
+    calls = []
+    monkeypatch.setattr("grasp.storage.ots._http_get",
+                        lambda url, timeout: calls.append(url) or "")
+    answer = ots_mod.fetch_block_header(
+        TWO_SOURCES[0], 957120, deadline=ots_mod.time.monotonic() - 1)
+    assert answer["ok"] is False
+    assert "budget" in answer["error"]
+    assert calls == []
 
 
 def test_ots_blobs_round_trip_locally(tmp_path):

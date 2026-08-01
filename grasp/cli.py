@@ -55,7 +55,7 @@ def _verify_failure_reason(out: dict) -> str:
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
-    out = tool_verify({})
+    out = tool_verify({"anchor": getattr(args, "anchor", False)})
     _emit(out, as_json=args.json)
     if out.get("ok"):
         return 0
@@ -153,6 +153,12 @@ def _add_ledger_commands(sub) -> None:
     )
     verify.add_argument("--json", action="store_true",
                         help="single-line JSON (default: pretty)")
+    verify.add_argument(
+        "--anchor", action="store_true",
+        help="also confirm the Merkle root landed in a Bitcoin block, and say "
+             "which tier answered (a node, or agreement between independent "
+             "block-header sources) and what that verdict trusts. Uses the "
+             "network, so it is off by default")
     verify.set_defaults(func=_cmd_verify)
     status = sub.add_parser(
         "status", help="show ledger location, record counts, and chain head")

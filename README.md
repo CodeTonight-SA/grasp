@@ -100,6 +100,55 @@ not anchor anything to Bitcoin on install. Anchoring is a deployment step you
 add on top (commit `forest_merkle_root(...)` via OpenTimestamps or the
 timestamping service of your choice).
 
+### Checking your own anchor
+
+Stamping a root and *confirming it reached a block* are different questions,
+and the second is the one that matters. Answering it the orthodox way needs a
+Bitcoin node — and a node is not free. Even a pruned one performs a full
+initial block download (758 GB as of 2026-08-01; `prune=` caps what is
+*retained*, not what is downloaded). More to the point, your node convinces
+only you: whoever you are proving something to checks the anchor against
+*their* node either way.
+
+So `grasp verify --anchor` works in tiers, and always says which one answered
+and what it rests on:
+
+| `verified_by` | What happened | What you are trusting |
+|---|---|---|
+| `bitcoin-node` | A reachable node confirmed it | Nothing — it validated the chain itself |
+| `multi-source-header` | Two or more independent block-header sources returned the **identical** header | That those operators would have to collude |
+| *(none)* | **Not confirmed** — a verdict is never manufactured | — |
+
+```console
+$ grasp verify --anchor
+...
+anchor_check:
+  confirmed:    true
+  block:        957120
+  block_hash:   0000000000000000000059a3e7682ab2d862cb6d0988afe8d4e890c93a07c21b
+  verified_by:  multi-source-header
+  trust:        2 independent block-header sources (blockstream.info,
+                mempool.space) returned the identical header, and they would
+                have to collude to forge it. This is NOT a local full node.
+```
+
+The lighter tier is sound rather than a shortcut, because the cryptography
+still happens on your machine: `ots --no-bitcoin verify` binds your digest to
+the proof and **computes** the merkle root up from it through the proof's own
+operations. Only the "does block N really carry that root?" lookup is
+outsourced — a forged proof fails locally, before any lookup happens. Sources
+that disagree are refused outright rather than out-voted, and a root the real
+block does not carry is reported as a disproof that takes `ok` away.
+
+Set `GRASP_BITCOIN_NODE` to an RPC URL to use the trustless tier instead; no
+code change is needed. A pruned node serves it fine, because the client only
+asks for `getblockcount`, `getblockhash` and `getblockheader`, and
+`getblockheader` reads the block index rather than block data — which pruning
+never discards.
+
+The anchor check is **opt-in** for a reason: plain `grasp verify` is offline
+and stays that way. `--anchor` is the only part that touches the network.
+
 ## Install and run the conformance tests
 
 ```bash

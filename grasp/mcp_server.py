@@ -161,35 +161,68 @@ def tool_prove_claim(args: dict) -> dict:
     }
 
 
+def _anchor_check(merkle_root: str, timeout: float = 40) -> dict:
+    """Did the anchored root actually land in a Bitcoin block?
+
+    Opt-in, because it is the only part of ``verify`` that touches the network
+    — the rest is deliberately offline and silently dialling out would break
+    that promise. Returned as its own block so it never blurs into the tamper
+    verdict.
+    """
+    from grasp.storage.ots import BitcoinOTSAdapter
+
+    verdict = BitcoinOTSAdapter().verify(merkle_root, timeout=timeout)
+    checked: dict[str, Any] = {
+        "confirmed": verdict.confirmed,
+        "detail": verdict.detail,
+        "verified_by": verdict.verified_by,
+        "trust": verdict.trust,
+    }
+    for key in ("block", "block_hash", "block_time"):
+        if getattr(verdict, key) is not None:
+            checked[key] = getattr(verdict, key)
+    if verdict.sources:
+        checked["sources"] = list(verdict.sources)
+    # A MISMATCH is a positive DISPROOF — the proof commits to a root the real
+    # block does not carry. That must never read as ok. "Not in a block yet" is
+    # ordinary and must not disqualify, so only the disproof is surfaced here.
+    checked["disproved"] = "MISMATCH" in verdict.detail
+    return checked
+
+
+def _verify_decision_chain(chain: list, out: dict) -> bool:
+    """Fill ``out`` with the decision-chain verdict; return whether it anchors."""
+    if not chain:
+        out["decision_chain"] = "empty"
+        return True  # vacuously anchored for an empty ledger
+    # The ledger's genesis record may have ``predecessor_idr: null`` (e.g. a
+    # ledger first seeded by a prove-it artifact) — NOT an admissible
+    # exogenous anchor. Use the ``human:`` fallback as the forest's DECLARED
+    # root so the forest builds instead of crashing ``AttributeError:
+    # 'NoneType' … 'startswith'``. The declared root is never a node and is
+    # never signed-over, so it cannot change any node's HMAC tamper verdict.
+    root = chain[0].predecessor_idr
+    genesis = root if is_admissible_anchor(root) else GENESIS_ANCHOR
+    try:
+        forest = build_chain_forest(chain, genesis_anchor=genesis)
+    except IdrForestError as exc:
+        out["decision_chain"] = Verdict.BROKEN.value
+        out["decision_chain_error"] = str(exc)
+        return False
+    out["decision_chain"] = verify_chain_integrity(forest).value
+    out["merkle_root"] = forest_merkle_root(forest)
+    unanchored = find_unanchored(forest)
+    out["anchored"] = not unanchored
+    if unanchored:
+        out["unanchored"] = len(unanchored)
+    return not unanchored
+
+
 def tool_verify(_args: dict) -> dict:
     out: dict[str, Any] = {"ok": True, "home": str(grasp_home())}
     chain = read_idr_chain()
     out["decisions"] = len(chain)
-    anchored = True  # vacuously true for an empty ledger
-    if chain:
-        # The ledger's genesis record may have ``predecessor_idr: null`` (e.g. a
-        # ledger first seeded by a prove-it artifact) — NOT an admissible
-        # exogenous anchor. Use the ``human:`` fallback as the forest's DECLARED
-        # root so the forest builds instead of crashing ``AttributeError:
-        # 'NoneType' … 'startswith'``. The declared root is never a node and is
-        # never signed-over, so it cannot change any node's HMAC tamper verdict.
-        root = chain[0].predecessor_idr
-        genesis = root if is_admissible_anchor(root) else GENESIS_ANCHOR
-        try:
-            forest = build_chain_forest(chain, genesis_anchor=genesis)
-            out["decision_chain"] = verify_chain_integrity(forest).value
-            out["merkle_root"] = forest_merkle_root(forest)
-            unanchored = find_unanchored(forest)
-            anchored = not unanchored
-            out["anchored"] = anchored
-            if unanchored:
-                out["unanchored"] = len(unanchored)
-        except IdrForestError as exc:
-            out["decision_chain"] = Verdict.BROKEN.value
-            out["decision_chain_error"] = str(exc)
-            anchored = False
-    else:
-        out["decision_chain"] = "empty"
+    anchored = _verify_decision_chain(chain, out)
     belief = verify_context_chain()
     out["belief_chain"] = belief.value if belief is not None else "empty"
     # ``ok`` is the AGGREGATE trust signal — it requires BOTH axes: the chains
@@ -201,7 +234,18 @@ def tool_verify(_args: dict) -> dict:
     # does not.
     tamper_free = out.get("decision_chain") in ("empty", Verdict.VERIFIED.value) and \
         out.get("belief_chain") in ("empty", Verdict.VERIFIED.value)
-    out["ok"] = tamper_free and anchored
+    # That anchoring axis is STRUCTURAL — every decision roots at a DECLARED
+    # exogenous anchor. It does not establish that the Bitcoin timestamp
+    # actually landed in a block, which needs a lookup. Asking for that is
+    # opt-in (the one part of verify that uses the network) and forms a THIRD
+    # axis, reported on its own. Only a positive DISPROOF — a merkleroot the
+    # real block does not carry — can take ``ok`` away; a proof still waiting
+    # on a block is ordinary and leaves ``ok`` untouched.
+    disproved = False
+    if _args.get("anchor") and out.get("merkle_root"):
+        out["anchor_check"] = _anchor_check(out["merkle_root"])
+        disproved = out["anchor_check"]["disproved"]
+    out["ok"] = tamper_free and anchored and not disproved
     return out
 
 
@@ -278,9 +322,25 @@ TOOLS: dict[str, tuple[Any, dict]] = {
             "Re-verify the entire recorded history offline: every decision "
             "signature, the chain linkage, the Merkle root, and the belief "
             "chain. Returns VERIFIED / DEGRADED / BROKEN per chain — the "
-            "arithmetic, not the agent, is the judge."
+            "arithmetic, not the agent, is the judge. Pass anchor=true to also "
+            "check that the Merkle root really landed in a Bitcoin block; that "
+            "step uses the network and reports which tier answered (a Bitcoin "
+            "node, or agreement between independent block-header sources) "
+            "along with the trust that verdict rests on."
         ),
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "anchor": {
+                    "type": "boolean",
+                    "description": (
+                        "Also confirm the Bitcoin anchor landed in a block. "
+                        "Uses the network; off by default so verify stays "
+                        "offline."
+                    ),
+                },
+            },
+        },
     }),
     "grasp_status": (tool_status, {
         "description": "Show the GRASP ledger location, record counts, and chain head.",

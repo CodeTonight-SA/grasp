@@ -5,6 +5,53 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-08-01
+
+Closes the loop on the anchor. GRASP could stamp a Merkle root into Bitcoin,
+but could not tell you whether that root ever actually **landed in a block**.
+Anchoring and confirming are different questions, and the second is the one a
+skeptic cares about.
+
+### Added
+
+- **`BitcoinOTSAdapter.verify(merkle_root)`** — did this root reach a block?
+  Returns an `AnchorVerdict` carrying the block height, block hash, block
+  time, *which tier answered*, and *what that verdict trusts*. Symmetric with
+  `anchor()`: it locates the proof by the same deterministic rule.
+- **`grasp verify --anchor`** and **`grasp_verify {"anchor": true}`** (MCP) —
+  the same check from the CLI and from any MCP host. Opt-in, because plain
+  `verify` promises an offline re-check and this is the one step that uses the
+  network.
+- **Tiered verification, with the tier always reported.** A reachable Bitcoin
+  node (`GRASP_BITCOIN_NODE`) needs no trust at all. Failing that, two or more
+  independent block-header sources must return the *identical* header, and the
+  result states plainly that those operators would have to collude — so header
+  agreement can never be mistaken for a full node. With neither available the
+  verdict is *not confirmed*; one is never manufactured.
+
+### Why not simply require a Bitcoin node
+
+`prune=` caps what a node **retains**, not what it downloads — a pruned node
+still performs a full initial block download, 758 GB as of 2026-08-01. And a
+node you run convinces only you: whoever you are proving something to checks
+the anchor against theirs. The lighter tier is sound because the cryptography
+stays local — `ots --no-bitcoin verify` binds your digest and *computes* the
+merkle root from it, so only the block lookup is outsourced and a forged proof
+fails before any lookup. Moving up to the trustless tier needs no code change.
+
+### Honesty properties, each with a test that fails without it
+
+- One responding source is not agreement; two or more, or no verdict.
+- Sources that disagree are refused outright rather than out-voted.
+- A merkle root the real block does not carry is a **disproof**: reported as
+  such, and it takes `ok` away even on an otherwise untampered chain.
+- A proof still waiting on a block is ordinary and does **not** take `ok`
+  away — "not yet" is not failure.
+- `grasp verify` without `--anchor` makes no network call at all.
+- A source that renamed its fields is distinguishable from one that is down.
+- One deadline budgets the whole check, so a slow source cannot multiply total
+  latency across attestations and sources.
+
 ## [0.1.0] - 2026-07-03
 
 Initial public release of **GRASP — Governed Reasoning And Signable
