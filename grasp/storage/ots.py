@@ -134,12 +134,32 @@ def _describe_error(exc: Exception) -> str:
     return type(exc).__name__
 
 
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    """Hold the https guarantee across redirects, not just at the first hop.
+
+    Checking the URL we were handed is not enough: urlopen follows redirects
+    on its own, so a trusted host answering with a 302 to ``http://`` — or to
+    an internal address — would walk the request straight past the check. The
+    scheme is re-tested on every hop, and a failing one is refused rather than
+    followed."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.startswith(_ALLOWED_SOURCE_SCHEME):
+            raise urllib.error.HTTPError(
+                newurl, code, f"refusing a redirect to {newurl[:40]!r} — header "
+                f"sources must stay {_ALLOWED_SOURCE_SCHEME}…", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_HttpsOnlyRedirects)
+
+
 def _http_get(url: str, timeout: float) -> str:
     if not url.startswith(_ALLOWED_SOURCE_SCHEME):
         raise ValueError(f"header sources must be {_ALLOWED_SOURCE_SCHEME}… — "
                          f"refusing {url[:40]!r}")
     req = urllib.request.Request(url, headers={"User-Agent": "grasp-ots/1"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+    with _OPENER.open(req, timeout=timeout) as resp:  # noqa: S310
         return resp.read().decode("utf-8", "replace").strip()
 
 

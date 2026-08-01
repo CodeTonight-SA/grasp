@@ -250,6 +250,26 @@ def test_only_https_sources_are_fetched():
         assert "ValueError" in answer["error"] or "https" in answer["error"]
 
 
+def test_https_survives_a_redirect_not_just_the_first_hop():
+    """Checking the URL we were handed is not enough — urlopen follows
+    redirects itself, so a trusted host answering 302 to http:// would walk
+    the request straight past the check."""
+    handler = ots_mod._HttpsOnlyRedirects()
+    with pytest.raises(urllib.error.HTTPError):
+        handler.redirect_request(
+            urllib.request.Request("https://blockstream.info/api/x"),
+            None, 302, "Found", {}, "http://169.254.169.254/latest/meta-data/")
+
+
+def test_an_https_redirect_is_still_followed():
+    """The guard must not break ordinary redirects between https hosts."""
+    handler = ots_mod._HttpsOnlyRedirects()
+    out = handler.redirect_request(
+        urllib.request.Request("https://blockstream.info/api/x"),
+        None, 302, "Found", {}, "https://blockstream.info/api/y")
+    assert out is not None and out.full_url == "https://blockstream.info/api/y"
+
+
 def test_a_broken_parser_does_not_masquerade_as_a_pending_proof(monkeypatch, tmp_path):
     """If the ots client rewords its output, every proof would silently read as
     'still waiting on a block'. A broken parser must not wear that costume."""
