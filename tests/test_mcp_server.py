@@ -170,3 +170,67 @@ def test_unknown_tool_and_method_are_clean_errors(client):
     assert resp["error"]["code"] == -32602
     resp2 = client.request("bogus/method")
     assert resp2["error"]["code"] == -32601
+
+
+# -- Bitcoin anchor confirmation is OPT-IN -----------------------------------
+#
+# `verify` promises an offline re-check. Confirming the Merkle root actually
+# reached a Bitcoin block is the one step needing the network, so it must never
+# happen unless asked for. And when a lookup positively DISPROVES the anchor,
+# `ok` must fall even though the chains themselves are untampered.
+
+def _stub_chain(mcp_server, monkeypatch):
+    monkeypatch.setattr(mcp_server, "_verify_decision_chain",
+                        lambda chain, out: out.update(
+                            decision_chain="verified", merkle_root="ab" * 32,
+                            anchored=True) or True)
+    monkeypatch.setattr(mcp_server, "verify_context_chain", lambda: None)
+
+
+def test_verify_stays_offline_unless_anchor_is_requested(monkeypatch):
+    from grasp import mcp_server
+
+    called = []
+    monkeypatch.setattr(mcp_server, "_anchor_check",
+                        lambda root, timeout=40: called.append(root) or {})
+    mcp_server.tool_verify({})
+    assert called == [], "verify must not reach the network unless asked"
+
+
+def test_verify_anchor_flag_reports_the_tier(monkeypatch):
+    from grasp import mcp_server
+
+    _stub_chain(mcp_server, monkeypatch)
+    monkeypatch.setattr(mcp_server, "_anchor_check", lambda root, timeout=40: {
+        "confirmed": True, "detail": "d", "verified_by": "multi-source-header",
+        "trust": "two sources agreed", "block": 957120, "disproved": False})
+    out = mcp_server.tool_verify({"anchor": True})
+    assert out["anchor_check"]["verified_by"] == "multi-source-header"
+    assert out["anchor_check"]["block"] == 957120
+    assert out["ok"] is True
+
+
+def test_a_disproved_anchor_takes_ok_away(monkeypatch):
+    """A merkleroot the real block does not carry is a positive disproof. An
+    untampered chain must still not read as ok when its anchor is refuted."""
+    from grasp import mcp_server
+
+    _stub_chain(mcp_server, monkeypatch)
+    monkeypatch.setattr(mcp_server, "_anchor_check", lambda root, timeout=40: {
+        "confirmed": False, "detail": "block 1: MERKLEROOT MISMATCH — ...",
+        "verified_by": None, "trust": None, "disproved": True})
+    assert mcp_server.tool_verify({"anchor": True})["ok"] is False
+
+
+def test_an_unconfirmed_anchor_is_not_a_disproof(monkeypatch):
+    """Waiting on a block is ordinary. Treating 'not yet' as failure would
+    make every freshly stamped ledger look broken."""
+    from grasp import mcp_server
+
+    _stub_chain(mcp_server, monkeypatch)
+    monkeypatch.setattr(mcp_server, "_anchor_check", lambda root, timeout=40: {
+        "confirmed": False, "detail": "no Bitcoin attestation yet",
+        "verified_by": None, "trust": None, "disproved": False})
+    out = mcp_server.tool_verify({"anchor": True})
+    assert out["ok"] is True
+    assert out["anchor_check"]["confirmed"] is False

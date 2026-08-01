@@ -18,4 +18,4 @@ Import the submodules directly; this package intentionally keeps the top-level
 namespace minimal.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

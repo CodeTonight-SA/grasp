@@ -33,5 +33,22 @@ Follow these rules:
    verdicts exactly as returned (VERIFIED / DEGRADED / BROKEN). Never
    paraphrase a BROKEN verdict as anything softer.
 
+5. **The external anchor.** When the user asks whether the record is anchored
+   in Bitcoin — or whether a date can be *proved* rather than asserted — call
+   `grasp_verify` with `anchor: true`. This is the only call here that uses
+   the network, so ask for it deliberately rather than by habit. Report three
+   things together, never the first alone:
+   - whether it is `confirmed`;
+   - `verified_by` — a Bitcoin node, or agreement between independent
+     block-header sources;
+   - `trust` — what that verdict rests on, verbatim.
+
+   Header agreement is **not** a local full node, and saying "confirmed"
+   without saying which tier answered misrepresents it. If the result is not
+   confirmed, say so plainly and distinguish the two reasons: a proof still
+   waiting on a block is ordinary ("not yet"), while a merkleroot the real
+   block does not carry is a **disproof** — report that as a failure, never
+   as pending.
+
 Do not narrate these calls at length — record, then continue the work. An
 unrecorded consequential decision is treated as theatre, not evidence.

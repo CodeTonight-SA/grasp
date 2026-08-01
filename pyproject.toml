@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "grasp-provenance"
-version = "0.1.0"
+version = "0.2.0"
 description = "GRASP — Governed Reasoning And Signable Provenance. Reference implementation of cryptographic causation for AI: signed decision records (IDR), a signed memory/belief chain, a deterministic citation-provenance floor (cite.verify), and a signed legal filing gate."
 readme = "README.md"
 requires-python = ">=3.10"
