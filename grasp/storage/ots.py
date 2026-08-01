@@ -75,6 +75,17 @@ _ATTESTATION_RE = re.compile(
     r"Bitcoin block (\d+) has merkleroot ([0-9a-fA-F]{64})")
 _BLOCK_HASH_RE = re.compile(r"[0-9a-f]{64}")
 _SUCCESS_RE = re.compile(r"Success!\s*Bitcoin block (\d+)", re.IGNORECASE)
+#: The client names its Bitcoin attestations even when told not to check them.
+#: Seeing that while parsing zero attestations means the PARSER failed — not
+#: that the proof is still waiting on a block. Without this discriminator a
+#: reworded client would make every proof read as "still pending": a broken
+#: parser wearing the costume of a proof that simply has not landed yet.
+_ATTESTATION_MENTION_RE = re.compile(r"Bitcoin attestation", re.IGNORECASE)
+#: Header sources are fetched over the network, so only https is accepted.
+#: Nothing untrusted reaches ``header_sources`` today, but a caller could plumb
+#: it from config — and then file://, an http:// metadata endpoint, or a
+#: private host would all be reachable. Cheap to refuse now.
+_ALLOWED_SOURCE_SCHEME = "https://"
 
 
 @dataclass(frozen=True)
@@ -124,6 +135,9 @@ def _describe_error(exc: Exception) -> str:
 
 
 def _http_get(url: str, timeout: float) -> str:
+    if not url.startswith(_ALLOWED_SOURCE_SCHEME):
+        raise ValueError(f"header sources must be {_ALLOWED_SOURCE_SCHEME}… — "
+                         f"refusing {url[:40]!r}")
     req = urllib.request.Request(url, headers={"User-Agent": "grasp-ots/1"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
         return resp.read().decode("utf-8", "replace").strip()
@@ -289,8 +303,10 @@ class BitcoinOTSAdapter:
                           timeout: float) -> list | None:
         """(height, merkleroot) pairs the client COMPUTES from our target.
 
-        None means the client could not run — distinct from an empty list,
-        which means it ran and the proof carries no Bitcoin attestation yet.
+        None means the client could not run, OR it ran and clearly HAD Bitcoin
+        attestations this parser failed to read — both fail to establish
+        anything. An empty list is the honestly different case: it ran and the
+        proof genuinely carries no Bitcoin attestation yet.
         """
         argv = ["ots", "--no-bitcoin", "verify", "-f", str(root_file), str(proof)]
         try:
@@ -299,7 +315,10 @@ class BitcoinOTSAdapter:
         except (OSError, subprocess.TimeoutExpired):
             return None
         text = (done.stdout or "") + (done.stderr or "")
-        return [(int(h), r.lower()) for h, r in _ATTESTATION_RE.findall(text)]
+        pairs = [(int(h), r.lower()) for h, r in _ATTESTATION_RE.findall(text)]
+        if not pairs and _ATTESTATION_MENTION_RE.search(text):
+            return None
+        return pairs
 
     def _verify_via_headers(self, root_file: Path, proof: Path, sources: tuple,
                             min_sources: int, timeout: float,

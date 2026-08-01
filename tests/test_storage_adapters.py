@@ -238,6 +238,43 @@ def test_a_changed_api_is_distinguishable_from_an_outage(monkeypatch):
     assert "missing the field" in answer["error"] and "merkle_root" in answer["error"]
 
 
+def test_only_https_sources_are_fetched():
+    """Nothing untrusted reaches header_sources today, but a caller could plumb
+    it from config — at which point file:// or an http:// metadata endpoint
+    would be reachable. Refusing now is one comparison."""
+    for bad in ("http://blockstream.info/api/block-height/{height}",
+                "file:///etc/passwd",
+                "http://169.254.169.254/latest/meta-data/{height}"):
+        answer = ots_mod.fetch_block_header(("x", bad, bad), 957120)
+        assert answer["ok"] is False
+        assert "ValueError" in answer["error"] or "https" in answer["error"]
+
+
+def test_a_broken_parser_does_not_masquerade_as_a_pending_proof(monkeypatch, tmp_path):
+    """If the ots client rewords its output, every proof would silently read as
+    'still waiting on a block'. A broken parser must not wear that costume."""
+    monkeypatch.setattr(
+        "grasp.storage.ots.subprocess.run",
+        lambda argv, **kw: subprocess.CompletedProcess(
+            argv, 1,
+            stdout="Not checking Bitcoin attestation; Bitcoin disabled\n"
+                   "To verify manually, look at block 957120 somehow",
+            stderr=""))
+    adapter = BitcoinOTSAdapter(root=tmp_path)
+    assert adapter._attested_heights(tmp_path / "r.txt", tmp_path / "p.ots", 10) is None
+
+
+def test_a_genuinely_pending_proof_still_reads_as_empty(monkeypatch, tmp_path):
+    """The other side of that discriminator: a proof with no Bitcoin
+    attestation at all is an empty list, not a parse failure."""
+    monkeypatch.setattr(
+        "grasp.storage.ots.subprocess.run",
+        lambda argv, **kw: subprocess.CompletedProcess(
+            argv, 1, stdout="Pending confirmation in calendar https://alice", stderr=""))
+    adapter = BitcoinOTSAdapter(root=tmp_path)
+    assert adapter._attested_heights(tmp_path / "r.txt", tmp_path / "p.ots", 10) == []
+
+
 def test_spent_budget_issues_no_http_request(monkeypatch):
     """The caller's timeout budgets the WHOLE check. Sources are queried once
     per attestation, so a per-request timeout would multiply total latency."""
