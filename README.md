@@ -389,6 +389,9 @@ verifier itself is inspectable — anyone relying on a GRASP record must be able
 to read, run, and modify the exact code that produced and verifies it, including
 when it is offered as a network service. Copyleft keeps that loop closed.
 
+**Commercial licences.** If the AGPL's network-use obligation does not fit your
+deployment, a commercial licence is available — contact licensing@codetonight.co.za.
+
 Copyright (C) 2024-2026 Lourens Cornelius Scheepers / CodeTonight (Pty) Ltd.
 
 Copyright (C) 2026 [CodeTonight SA](https://github.com/CodeTonight-SA).
