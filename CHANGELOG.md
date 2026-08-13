@@ -58,7 +58,7 @@ node you run convinces only you: whoever you are proving something to checks
 the anchor against theirs. The lighter tier is sound because the cryptography
 stays local — `ots --no-bitcoin verify` binds your digest and *computes* the
 merkle root from it, so only the block lookup is outsourced and a forged proof
-fails before any lookup. Moving up to the trustless tier needs no code change.
+fails before any lookup. Moving up to the node tier needs no code change.
 
 ### Honesty properties, each with a test that fails without it
 

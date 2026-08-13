@@ -153,7 +153,7 @@ outsourced — a forged proof fails locally, before any lookup happens. Sources
 that disagree are refused outright rather than out-voted, and a root the real
 block does not carry is reported as a disproof that takes `ok` away.
 
-Set `GRASP_BITCOIN_NODE` to an RPC URL to use the trustless tier instead; no
+Set `GRASP_BITCOIN_NODE` to an RPC URL to use the node tier instead; no
 code change is needed. A pruned node serves it fine, because the client only
 asks for `getblockcount`, `getblockhash` and `getblockheader`, and
 `getblockheader` reads the block index rather than block data — which pruning
