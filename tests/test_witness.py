@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from grasp.witness import NOT_COVERED, anchor_coverage, witness
+from grasp.witness import NOT_COVERED, anchor_coverage, with_anchor, witness
 
 MODEL = "claude-fable-5"
 
@@ -117,6 +117,37 @@ def test_nothing_bound_is_unwitnessed(home, ledgers):
     assert result.state == "unwitnessed"
     assert result.text == ""
     assert not ledgers["idr_path"].exists()
+
+
+def test_with_anchor_rerenders_the_card_not_a_footnote(home, ledgers):
+    """The CLI's --anchor path must print ONE card with the fresh coverage
+    row — a card still reading 'not yet covered' after a successful anchor
+    is a stale receipt (in-session council finding)."""
+    sealed = witness(_spec(), model=MODEL, home=home, **ledgers)
+    assert NOT_COVERED in sealed.card
+    fresh = with_anchor(sealed, "root cafecafecafe · 2026-08-13T21:00:00Z")
+    assert "root cafecafecafe" in fresh.card
+    assert NOT_COVERED not in fresh.card
+    assert fresh.state == sealed.state and fresh.seal == sealed.seal
+    # The original is untouched (frozen dataclass, replace-not-mutate).
+    assert NOT_COVERED in sealed.card
+
+
+def test_with_anchor_is_a_noop_without_a_good_seal(home, ledgers):
+    unsealed = witness(_spec(), model=MODEL, seal=False, home=home, **ledgers)
+    assert with_anchor(unsealed, "root cafecafecafe") is unsealed
+
+
+def test_anchor_coverage_skips_malformed_receipts(tmp_path):
+    home = tmp_path / "grasp-home"
+    ots = home / "storage" / "ots"
+    ots.mkdir(parents=True)
+    addr = "sha256:" + "ab" * 32
+    (ots / "root-000000000000.receipt.json").write_text(
+        json.dumps({"merkle_root": "00" * 32, "leaves": "not-a-list"}),
+        encoding="utf-8")
+    # Malformed receipt: skipped, never a crash, honestly uncovered.
+    assert anchor_coverage(addr, home=home) == NOT_COVERED
 
 
 # ------------------------------------------------------------- link surface

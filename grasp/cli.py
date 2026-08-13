@@ -219,28 +219,34 @@ def _add_activation_commands(sub) -> None:
 
 
 def _cmd_witness(args: argparse.Namespace) -> int:
-    """See it, prove it, seal it — one response, one gesture."""
-    from grasp.witness import anchor_coverage, witness
+    """See it, prove it, seal it — one response, one gesture.
+
+    With ``--anchor``, the root is stamped BEFORE the card prints, and the
+    card is re-rendered with the fresh coverage row — a card that reads
+    'not yet covered' after a successful anchor would be a stale receipt
+    (in-session council finding, seal d5f7e9abe4bbe436)."""
+    from grasp.witness import anchor_coverage, witness, with_anchor
 
     spec = json.loads(Path(args.input).read_text(encoding="utf-8"))
     result = witness(spec, model=args.model, seal=not args.no_seal)
-    anchor_line = result.anchor
     if args.anchor and result.state == "sealed":
         from grasp.mcp_server import tool_anchor
-        if tool_anchor({}).get("ok"):
-            anchor_line = anchor_coverage(
-                str((result.seal or {}).get("idr_addr", "")))
+        anchored = tool_anchor({})
+        if anchored.get("ok"):
+            result = with_anchor(result, anchor_coverage(
+                str((result.seal or {}).get("idr_addr", ""))))
+        else:
+            print(f"ANCHOR FAILED: {anchored.get('detail', 'unknown')}",
+                  file=sys.stderr)
     if args.json:
         print(json.dumps({
-            "state": result.state, "anchor": anchor_line,
+            "state": result.state, "anchor": result.anchor,
             "artifact_path": result.footer.artifact_path,
             "seal": result.seal, "exit_code": result.exit_code,
         }, sort_keys=True))
         return result.exit_code
     if result.text:
         print(result.text)
-        if args.anchor and anchor_line != result.anchor:
-            print(f"anchored   {anchor_line}")
     else:
         print(f"unwitnessed: {result.footer.reason}", file=sys.stderr)
     return result.exit_code

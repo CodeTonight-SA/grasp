@@ -38,7 +38,7 @@ from grasp.home import grasp_home
 from grasp.prove_it import STATUS_FUZZY, STATUS_NOT_FOUND, STATUS_VERIFIED
 from grasp.provenance import record_proveit_provenance
 
-__all__ = ["witness", "WitnessResult", "anchor_coverage"]
+__all__ = ["witness", "WitnessResult", "anchor_coverage", "with_anchor"]
 
 NOT_COVERED = "sealed · not yet covered by an anchored root"
 
@@ -59,6 +59,7 @@ class WitnessResult:
     seal: dict | None = None
     anchor: str = ""
     card: str = ""
+    model: str = ""
 
     @property
     def text(self) -> str:
@@ -88,11 +89,30 @@ def anchor_coverage(idr_addr: str, *, home: Path | None = None) -> str:
         return NOT_COVERED
     receipts, _unreadable = load_receipts((home or grasp_home()) / "storage")
     for receipt in reversed(receipts):  # newest first
-        if idr_addr in set(receipt.get("leaves", ())):
+        leaves = receipt.get("leaves")
+        if not isinstance(leaves, list):  # malformed receipt: skip, never crash
+            continue
+        if idr_addr in leaves:
             root12 = str(receipt.get("merkle_root", ""))[:12]
             when = str(receipt.get("created_utc", ""))
             return f"root {root12} · {when}" if when else f"root {root12}"
     return NOT_COVERED
+
+
+def with_anchor(result: WitnessResult, anchor_line: str) -> WitnessResult:
+    """A copy of RESULT whose card carries ANCHOR_LINE — for callers that
+    anchor AFTER sealing (the CLI's ``--anchor``) and must not print a card
+    whose anchor row went stale the moment the root was stamped. A receipt
+    that reads ``not yet covered`` after a successful anchor is the exact
+    stale-face the coverage row exists to prevent."""
+    from dataclasses import replace
+
+    if result.seal is None or not result.seal.get("ok") or not result.footer.provenance:
+        return result
+    card = render_card("grasp_witness", _card_fields(
+        result.model, result.footer.provenance, result.seal, anchor_line,
+        result.state == "unproven"))
+    return replace(result, anchor=anchor_line, card=card)
 
 
 def _bound_tally(tally: dict) -> str:
@@ -134,10 +154,15 @@ def witness(spec: dict, *, model: str, seal: bool = True,
     ``head_pointer`` pass through to the provenance recorder for hermetic
     tests. Auto-callers that only want the floor pass ``seal=False`` —
     sealing is an explicit gesture, never a side effect of looking.
+
+    An UNPROVEN answer still seals when asked to (deliberate): the IDR is
+    an event log, and the honest record of a claim that FAILED the floor —
+    ✗ tally, grounding below 1.00 — is exactly the record a skeptic wants
+    kept. The card's glyph and exit code carry the failure either way.
     """
     footer = render_footer(spec, model=model, mode=mode, home=home)
     if not footer.emitted or footer.provenance is None:
-        return WitnessResult(state="unwitnessed", footer=footer)
+        return WitnessResult(state="unwitnessed", footer=footer, model=model)
 
     prov = footer.provenance
     unproven = prov["tally"].get(STATUS_NOT_FOUND, 0) > 0
@@ -163,4 +188,4 @@ def witness(spec: dict, *, model: str, seal: bool = True,
                        _card_fields(model, prov, seal_result, anchor_line,
                                     unproven))
     return WitnessResult(state=state, footer=footer, seal=seal_result,
-                         anchor=anchor_line, card=card)
+                         anchor=anchor_line, card=card, model=model)
