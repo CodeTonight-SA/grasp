@@ -218,6 +218,67 @@ def _add_activation_commands(sub) -> None:
     open_cmd.set_defaults(func=_cmd_open)
 
 
+def _cmd_witness(args: argparse.Namespace) -> int:
+    """See it, prove it, seal it — one response, one gesture.
+
+    With ``--anchor``, the root is stamped BEFORE the card prints, and the
+    card is re-rendered with the fresh coverage row — a card that reads
+    'not yet covered' after a successful anchor would be a stale receipt
+    (in-session council finding, seal d5f7e9abe4bbe436)."""
+    from grasp.witness import anchor_coverage, witness, with_anchor
+
+    spec = json.loads(Path(args.input).read_text(encoding="utf-8"))
+    result = witness(spec, model=args.model, seal=not args.no_seal)
+    # Gate --anchor on the SEAL, not the state: an unproven answer that
+    # sealed is still a recorded leaf, and the honest record of a FAILED
+    # proof deserves anchor coverage just as much (council round 2, seal
+    # dd78d89e09229907 — the state check made --anchor a silent no-op).
+    if args.anchor and result.seal is not None and result.seal.get("ok"):
+        from grasp.mcp_server import tool_anchor
+        anchored = tool_anchor({})
+        if anchored.get("ok"):
+            result = with_anchor(result, anchor_coverage(
+                str((result.seal or {}).get("idr_addr", ""))))
+        else:
+            print(f"ANCHOR FAILED: {anchored.get('detail', 'unknown')}",
+                  file=sys.stderr)
+    if args.json:
+        print(json.dumps({
+            "state": result.state, "anchor": result.anchor,
+            "artifact_path": result.footer.artifact_path,
+            "seal": result.seal, "exit_code": result.exit_code,
+        }, sort_keys=True))
+        return result.exit_code
+    if result.text:
+        print(result.text)
+    else:
+        print(f"unwitnessed: {result.footer.reason}", file=sys.stderr)
+    return result.exit_code
+
+
+def _add_witness_commands(sub) -> None:
+    wit = sub.add_parser(
+        "witness",
+        help="one gesture: render the prove-it artifact, verify every "
+             "[[cite:ID]]-bound claim, and seal the record; exits non-zero "
+             "when a bound claim is not found in its source")
+    wit.add_argument("--input", required=True, metavar="SPEC_JSON",
+                     help="prove-it spec (title, response, sources, citations)")
+    wit.add_argument("--model", required=True,
+                     help="model name for the card badge (provenance, "
+                          "not decoration)")
+    wit.add_argument("--no-seal", action="store_true",
+                     help="stop at the floor: no IDR leaf, no memory-chain "
+                          "node — sealing is a gesture, never a side effect")
+    wit.add_argument("--anchor", action="store_true",
+                     help="after sealing, stamp the Merkle root so the new "
+                          "leaf is covered by a continuity receipt "
+                          "(network; opt-in)")
+    wit.add_argument("--json", action="store_true",
+                     help="single-line JSON (default: card)")
+    wit.set_defaults(func=_cmd_witness)
+
+
 def _add_honesty_commands(sub) -> None:
     honesty = sub.add_parser(
         "honesty",
@@ -247,6 +308,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     _add_ledger_commands(sub)
     _add_activation_commands(sub)
+    _add_witness_commands(sub)
     _add_honesty_commands(sub)
     return parser
 

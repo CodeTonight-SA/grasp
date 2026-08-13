@@ -327,11 +327,74 @@ are plain URLs, so modern terminals link them with zero escape codes, and
 │ claims     2 — ✓2 ≈0 ✗0                                    │
 │ grounding  ██████████ 1.00                                 │
 ╰─ facta, non verba ─────────────────────────────────────────╯
-┆ inspect  file:///…/prove-it/41e3e9c8bc90.html
+┆ inspect  ~/.grasp/prove-it/41e3e9c8bc90.html
 ┆ or run   grasp open 41e3e9c8bc90
 ```
 
+The inspect row is a plain path, never a `file://` URI — terminals that
+auto-link plain paths and https URLs do not link `file://`, so the URI
+form is the one guaranteed-dead click surface.
+
 A fabricated quote cannot pass: it renders ✗ and flips the card's glyph.
+
+## WITNESS — one gesture
+
+`grasp witness` fuses the three things an answer worth keeping deserves:
+the rendered prove-it artifact you can open, the deterministic check over
+every `[[cite:ID]]`-bound claim, and the sealed record anyone can verify
+without trusting us. It composes the footer, the IDR leaf, and the
+memory-chain node this package already ships — no new cryptography, no new
+spec.
+
+```bash
+grasp witness --input spec.json --model claude-fable-5            # see + prove + seal
+grasp witness --input spec.json --model claude-fable-5 --no-seal  # stop at the floor
+grasp witness --input spec.json --model claude-fable-5 --anchor   # then stamp the root (network; opt-in)
+```
+
+Real output (a two-citation spec, both quotes present verbatim):
+
+```text
+╭─ GRASP ✓ WITNESS ──────────────────────────────────────────╮
+│ model      ◆ claude-fable-5                                │
+│ verified   true                                            │
+│ claims     2 bound — ✓2 ≈0 ✗0                              │
+│ grounding  ██████████ 1.00                                 │
+│ decision   idr a17619c11470 · memory precog-1786655048-8e… │
+│ anchor     sealed · not yet covered by an anchored root    │
+╰─ facta, non verba ─────────────────────────────────────────╯
+┆ inspect  ~/.grasp/prove-it/85118dd7eef4.html
+┆ or run   grasp open 85118dd7eef4
+```
+
+Read the card the way a skeptic would, because every row is a handle:
+
+- **claims** counts BOUND claims only, and says so — the tally measures
+  citation discipline, not correctness, and assertions the author never
+  bound to a source are simply not measured. A fabricated quote renders
+  ✗, flips the glyph, and the command **exits non-zero**.
+- **decision** names the sealed IDR leaf and the memory-chain node — the
+  tamper-evident record of what was decided and what was believed.
+  Sealing is additive and fail-open: if recording fails, the row says
+  `unrecorded (degraded)` instead of showing a clean face.
+- **anchor** references an anchored Merkle root ONLY when the newest
+  continuity receipt actually covers this leaf, by arithmetic on the
+  receipt's own committed leaf set — and shows the root digest a verifier
+  can re-check, never a bare date. Until the next `grasp anchor` run, a
+  fresh seal honestly reads `not yet covered`. Sealed and anchored are
+  different strengths, and the card never blurs them.
+
+Why this exists, in one sentence: an embedded watermark is a maker's mark
+on the coin — it signals that an AI touched the artifact; WITNESS is the
+flight recorder and its maintenance log — the sealed, replayable record of
+what was decided, believed and claimed underneath the artifact. The two
+answer different questions and compose (the EU AI Act's Article 50 marking
+serves transparency of content; record-keeping and explanation duties of
+the Article 12/86 kind concern accountability of process). A witness says
+**sealed**, **tamper-evident**, **complement-to-watermarks**. It does not
+say signed, non-repudiable, compliant, or true — a ✓ means the quote
+exists verbatim in the named source and the record has not been altered
+since sealing, and nothing more.
 
 ## Provider honesty — the floor that refuses to lie
 
