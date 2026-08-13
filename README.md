@@ -74,13 +74,24 @@ guarantee; anything above it is recall.
 
 ## Signing, honestly stated
 
-Records are hash-chained and Merkle-rooted; signed **HMAC-SHA256 by default**
+Records are hash-chained and Merkle-rooted; sealed **HMAC-SHA256 by default**
 over a locally held key (`GRASP_SIGNING_KEY` env var, or a key file created on
 first use under `~/.grasp/keys/` with 0600 permissions — the key never enters a
 record; only signatures and a short key fingerprint do). Asymmetric per-tenant
 signing (Ed25519, post-quantum schemes) is an integration path for deployments
 that provision key custody: this verifier deliberately marks schemes it cannot
 check as `DEGRADED` — monotone toward safe, never upgraded to `VERIFIED`.
+
+## What GRASP proves — and what it doesn't
+
+The full trust-boundary document lives at
+[`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md): the six adversaries the design
+considers, which attacks the arithmetic defeats (outsider tampering,
+truncation-after-anchor, damaged ledgers, scheme downgrade), which it only
+*bounds* (the key holder under symmetric default; time against the Bitcoin
+clock rather than an eIDAS-qualified authority), and the ordered hardening
+roadmap that closes the gaps. We publish it deliberately — a verifier you
+cannot threat-model is marketing.
 
 ## Anchored in the real world
 
@@ -97,8 +108,10 @@ checkable on any explorer:
 Check it yourself — that is the point. To be precise about what this means:
 those anchors witness *pilot deployments* of the approach; this package does
 not anchor anything to Bitcoin on install. Anchoring is a deployment step you
-add on top (commit `forest_merkle_root(...)` via OpenTimestamps or the
-timestamping service of your choice).
+opt into: `grasp anchor` stamps the current Merkle root via OpenTimestamps
+and writes a continuity receipt of the exact leaf set it commits to — so a
+later `grasp verify` can prove no anchored record was truncated or rewritten.
+It refuses to anchor a chain that does not verify.
 
 ### Checking your own anchor
 
@@ -140,7 +153,7 @@ outsourced — a forged proof fails locally, before any lookup happens. Sources
 that disagree are refused outright rather than out-voted, and a root the real
 block does not carry is reported as a disproof that takes `ok` away.
 
-Set `GRASP_BITCOIN_NODE` to an RPC URL to use the trustless tier instead; no
+Set `GRASP_BITCOIN_NODE` to an RPC URL to use the node tier instead; no
 code change is needed. A pruned node serves it fine, because the client only
 asks for `getblockcount`, `getblockhash` and `getblockheader`, and
 `getblockheader` reads the block index rather than block data — which pruning

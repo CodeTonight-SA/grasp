@@ -37,7 +37,7 @@ any node serves that lookup, pruned or not: the client asks only for
 ``getblockheader`` reads the block index rather than block data, which
 pruning never discards.
 
-Point ``GRASP_BITCOIN_NODE`` at an RPC URL to use the trustless tier; no
+Point ``GRASP_BITCOIN_NODE`` at an RPC URL to use the node tier; no
 code change is needed to move up to it.
 """
 from __future__ import annotations
