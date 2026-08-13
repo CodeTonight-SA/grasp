@@ -271,8 +271,16 @@ class BitcoinOTSAdapter:
         return self._blobs.get(record_id)
 
     # -- the witness surface ---------------------------------------------
-    def anchor(self, merkle_root: str) -> str | None:
-        """Stamp the root via ``ots``; return the proof-file locator."""
+    def anchor(self, merkle_root: str, *,
+               receipt: dict | None = None) -> str | None:
+        """Stamp the root via ``ots``; return the proof-file locator.
+
+        ``receipt`` (optional): a continuity receipt from
+        ``grasp.continuity.build_receipt`` — the leaf set this root commits
+        to. Written next to the proof ONLY after stamping succeeded, so every
+        receipt on disk has its ``.ots``: the receipt inherits the anchor's
+        integrity instead of standing on its own word.
+        """
         if shutil.which("ots") is None:
             return None
         ots_dir = self._root / "ots"
@@ -290,6 +298,9 @@ class BitcoinOTSAdapter:
             return None
         if done.returncode != 0 or not proof.exists():
             return None
+        if receipt is not None:
+            from grasp.continuity import write_receipt
+            write_receipt(receipt, self._root)
         return f"file://{proof}"
 
     def _proof_path(self, merkle_root: str) -> tuple[Path, Path]:

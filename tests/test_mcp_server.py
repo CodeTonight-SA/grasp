@@ -180,10 +180,13 @@ def test_unknown_tool_and_method_are_clean_errors(client):
 # `ok` must fall even though the chains themselves are untampered.
 
 def _stub_chain(mcp_server, monkeypatch):
+    # Mirrors the real contract: (anchored, forest). forest=None means the
+    # continuity check runs over an empty leaf set — "no-receipts" in a tmp
+    # home — so these anchor-axis tests stay isolated from continuity.
     monkeypatch.setattr(mcp_server, "_verify_decision_chain",
                         lambda chain, out: out.update(
                             decision_chain="verified", merkle_root="ab" * 32,
-                            anchored=True) or True)
+                            anchored=True) or (True, None))
     monkeypatch.setattr(mcp_server, "verify_context_chain", lambda: None)
 
 

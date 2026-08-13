@@ -42,6 +42,15 @@ def _verify_failure_reason(out: dict) -> str:
     at an exogenous anchor'."""
     if "broken" in (out.get("decision_chain"), out.get("belief_chain")):
         return "VERIFY FAILED: BROKEN — a signed record was tampered."
+    cont = out.get("continuity") or {}
+    if cont.get("status") == "broken":
+        return (f"VERIFY FAILED: CONTINUITY — {cont.get('missing', '?')} "
+                "anchored record(s) are missing from the current ledger "
+                "(truncated or rewritten since the last anchor). See "
+                "'continuity'.")
+    if cont.get("status") == "receipt-corrupt":
+        return ("VERIFY FAILED: CONTINUITY — the continuity receipt itself "
+                "does not verify (altered or unreadable). See 'continuity'.")
     if out.get("anchored") is False:
         n = out.get("unanchored", 0)
         return (
@@ -67,6 +76,16 @@ def _cmd_status(args: argparse.Namespace) -> int:
     out = tool_status({})
     _emit(out, as_json=args.json)
     return 0 if out.get("ok") else 1
+
+
+def _cmd_anchor(args: argparse.Namespace) -> int:
+    from grasp.mcp_server import tool_anchor
+    out = tool_anchor({})
+    _emit(out, as_json=args.json)
+    if out.get("ok"):
+        return 0
+    print(f"ANCHOR FAILED: {out.get('detail', 'unknown')}", file=sys.stderr)
+    return 1
 
 
 def _default_licenses_root() -> Path:
@@ -160,6 +179,16 @@ def _add_ledger_commands(sub) -> None:
              "block-header sources) and what that verdict trusts. Uses the "
              "network, so it is off by default")
     verify.set_defaults(func=_cmd_verify)
+    anchor = sub.add_parser(
+        "anchor",
+        help="stamp the current Merkle root via OpenTimestamps and write a "
+             "continuity receipt of the exact leaf set it commits to — so a "
+             "later `verify` can prove no anchored record was truncated or "
+             "rewritten. Refuses to anchor a chain that does not verify",
+    )
+    anchor.add_argument("--json", action="store_true",
+                        help="single-line JSON (default: pretty)")
+    anchor.set_defaults(func=_cmd_anchor)
     status = sub.add_parser(
         "status", help="show ledger location, record counts, and chain head")
     status.add_argument("--json", action="store_true",

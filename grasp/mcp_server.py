@@ -32,6 +32,7 @@ from dataclasses import asdict
 from typing import Any
 
 from grasp.context_chain import checkpoint, verify_context_chain
+from grasp.continuity import build_receipt, check_continuity, current_leaf_set
 from grasp.home import grasp_home
 from grasp.idr import build_idr, append_idr, content_addr, read_idr_chain
 from grasp.idr_forest import (
@@ -190,11 +191,14 @@ def _anchor_check(merkle_root: str, timeout: float = 40) -> dict:
     return checked
 
 
-def _verify_decision_chain(chain: list, out: dict) -> bool:
-    """Fill ``out`` with the decision-chain verdict; return whether it anchors."""
+def _verify_decision_chain(chain: list, out: dict) -> tuple[bool, Any]:
+    """Fill ``out`` with the decision-chain verdict.
+
+    Returns ``(anchored, forest)`` — the forest so callers (continuity check,
+    ``tool_anchor``) never rebuild it, ``None`` when it could not build."""
     if not chain:
         out["decision_chain"] = "empty"
-        return True  # vacuously anchored for an empty ledger
+        return True, None  # vacuously anchored for an empty ledger
     # The ledger's genesis record may have ``predecessor_idr: null`` (e.g. a
     # ledger first seeded by a prove-it artifact) — NOT an admissible
     # exogenous anchor. Use the ``human:`` fallback as the forest's DECLARED
@@ -208,21 +212,27 @@ def _verify_decision_chain(chain: list, out: dict) -> bool:
     except IdrForestError as exc:
         out["decision_chain"] = Verdict.BROKEN.value
         out["decision_chain_error"] = str(exc)
-        return False
+        return False, None
     out["decision_chain"] = verify_chain_integrity(forest).value
     out["merkle_root"] = forest_merkle_root(forest)
     unanchored = find_unanchored(forest)
     out["anchored"] = not unanchored
     if unanchored:
         out["unanchored"] = len(unanchored)
-    return not unanchored
+    return not unanchored, forest
 
 
 def tool_verify(_args: dict) -> dict:
     out: dict[str, Any] = {"ok": True, "home": str(grasp_home())}
-    chain = read_idr_chain()
+    malformed: list[int] = []
+    chain = read_idr_chain(malformed=malformed)
     out["decisions"] = len(chain)
-    anchored = _verify_decision_chain(chain, out)
+    # A skipped ledger line is a record that vanished from the chain — the
+    # parser tolerates it so one corrupt byte cannot brick reading, but a
+    # VERIFIER must never keep it silent. Continuity (below) is what turns a
+    # vanished ANCHORED record into a hard failure.
+    out["malformed_lines"] = len(malformed)
+    anchored, forest = _verify_decision_chain(chain, out)
     belief = verify_context_chain()
     out["belief_chain"] = belief.value if belief is not None else "empty"
     # ``ok`` is the AGGREGATE trust signal — it requires BOTH axes: the chains
@@ -245,8 +255,53 @@ def tool_verify(_args: dict) -> dict:
     if _args.get("anchor") and out.get("merkle_root"):
         out["anchor_check"] = _anchor_check(out["merkle_root"])
         disproved = out["anchor_check"]["disproved"]
-    out["ok"] = tamper_free and anchored and not disproved
+    # FOURTH axis — continuity: every record the last anchor committed to must
+    # still be present, byte-for-byte, in the current ledger. This is what
+    # makes VERIFIED mean complete-or-fail: without it, truncating the tail or
+    # rewriting-and-resealing a record yields a smaller/different chain that
+    # is internally consistent and still reads VERIFIED (red-team 2026-08-13).
+    # ``no-receipts`` (legacy anchors, fresh installs) is honest absence and
+    # never fails — but it is REPORTED, never blended into a pass.
+    current = current_leaf_set(forest) if forest is not None else set()
+    continuity = check_continuity(current, grasp_home() / "storage")
+    out["continuity"] = continuity
+    continuity_ok = continuity["status"] in ("ok", "no-receipts")
+    out["ok"] = tamper_free and anchored and not disproved and continuity_ok
     return out
+
+
+def tool_anchor(_args: dict) -> dict:
+    """Stamp the CURRENT forest root via OpenTimestamps, with a continuity
+    receipt of the exact leaf set the root commits to.
+
+    Refuses to notarise a chain that does not verify — anchoring known-broken
+    state would launder tamper into a Bitcoin-witnessed record.
+    """
+    chain = read_idr_chain()
+    if not chain:
+        return {"ok": False, "detail": "empty ledger — nothing to anchor"}
+    scratch: dict[str, Any] = {}
+    _anchored, forest = _verify_decision_chain(chain, scratch)
+    if forest is None or scratch.get("decision_chain") != Verdict.VERIFIED.value:
+        return {"ok": False,
+                "detail": "refusing to anchor: the chain does not verify "
+                          f"(decision_chain={scratch.get('decision_chain')!r})",
+                "decision_chain": scratch.get("decision_chain")}
+    from grasp.storage.ots import BitcoinOTSAdapter
+    receipt = build_receipt(forest, chain)
+    locator = BitcoinOTSAdapter().anchor(receipt["merkle_root"], receipt=receipt)
+    if locator is None:
+        return {"ok": False,
+                "detail": "stamping failed — is the OpenTimestamps client on "
+                          "PATH? (pipx install opentimestamps-client); no "
+                          "receipt was written",
+                "merkle_root": receipt["merkle_root"]}
+    return {"ok": True, "merkle_root": receipt["merkle_root"],
+            "leaf_count": receipt["leaf_count"], "tip_id": receipt["tip_id"],
+            "proof": locator,
+            "detail": "root stamped and continuity receipt written; run "
+                      "`ots upgrade` once a block includes it, then "
+                      "`grasp verify --anchor`"}
 
 
 def tool_status(_args: dict) -> dict:
