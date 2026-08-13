@@ -229,7 +229,11 @@ def _cmd_witness(args: argparse.Namespace) -> int:
 
     spec = json.loads(Path(args.input).read_text(encoding="utf-8"))
     result = witness(spec, model=args.model, seal=not args.no_seal)
-    if args.anchor and result.state == "sealed":
+    # Gate --anchor on the SEAL, not the state: an unproven answer that
+    # sealed is still a recorded leaf, and the honest record of a FAILED
+    # proof deserves anchor coverage just as much (council round 2, seal
+    # dd78d89e09229907 — the state check made --anchor a silent no-op).
+    if args.anchor and result.seal is not None and result.seal.get("ok"):
         from grasp.mcp_server import tool_anchor
         anchored = tool_anchor({})
         if anchored.get("ok"):

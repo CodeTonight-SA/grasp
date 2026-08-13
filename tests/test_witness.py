@@ -138,6 +138,21 @@ def test_with_anchor_is_a_noop_without_a_good_seal(home, ledgers):
     assert with_anchor(unsealed, "root cafecafecafe") is unsealed
 
 
+def test_unproven_but_sealed_still_takes_an_anchor(home, ledgers):
+    """Council round 2 (seal dd78d89e09229907): an UNPROVEN answer that
+    sealed is a recorded leaf, and --anchor must cover it — gating on
+    state == 'sealed' made the operator's explicit anchor a silent no-op
+    on exactly the failure record most worth covering."""
+    result = witness(_spec("words that are not in the source"),
+                     model=MODEL, home=home, **ledgers)
+    assert result.state == "unproven"
+    assert result.seal and result.seal["ok"]  # sealed despite the ✗
+    fresh = with_anchor(result, "root cafecafecafe · 2026-08-13T21:30:00Z")
+    assert "root cafecafecafe" in fresh.card
+    assert fresh.state == "unproven"          # the anchor never launders the ✗
+    assert fresh.exit_code == 1
+
+
 def test_anchor_coverage_skips_malformed_receipts(tmp_path):
     home = tmp_path / "grasp-home"
     ots = home / "storage" / "ots"
