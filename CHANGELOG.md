@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Continuity receipts — VERIFIED now means complete-or-fail** (#13). `grasp
+  anchor` (CLI and MCP `grasp_anchor`) stamps the current Merkle root via
+  OpenTimestamps **and** writes a receipt of the exact leaf set that root
+  commits to. `grasp verify` then checks every anchored leaf is still present:
+  a ledger truncated or rewritten since its last anchor fails loudly
+  (`VERIFY FAILED: CONTINUITY`), instead of the smaller, internally consistent
+  history reading VERIFIED. Found by internal red-team, 2026-08-13.
+- **Malformed ledger lines are counted, never silent** (#13). `grasp verify`
+  reports `malformed_lines`; with a receipt present, a corrupted line surfaces
+  as a missing anchored leaf and breaks the verdict.
+- **`grasp anchor` refuses a chain that does not verify** (#13) — you cannot
+  anchor yourself an alibi.
+- **Threat model published** — [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md):
+  the six adversaries considered, what the arithmetic defeats vs merely
+  bounds (the symmetric-key custody boundary, the Bitcoin clock vs eIDAS),
+  and the ordered hardening roadmap. Linked from the README.
+
 ## [0.2.0] - 2026-08-01
 
 Closes the loop on the anchor. GRASP could stamp a Merkle root into Bitcoin,
