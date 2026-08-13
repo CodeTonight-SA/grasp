@@ -288,6 +288,7 @@ def append_idr(idr: PrecogIDR, path: Path | None = None) -> None:
 def read_idr_chain(
     predecessor_id: str | None = None,
     path: Path | None = None,
+    malformed: list[int] | None = None,
 ) -> list[PrecogIDR]:
     """Read the predecessor chain starting from ``predecessor_id``.
 
@@ -307,23 +308,29 @@ def read_idr_chain(
     target = _coerce_optional_path(path) or _default_idr_path()
     if not target.exists():
         return []
-    all_idrs = _parse_idr_file(target)
+    all_idrs = _parse_idr_file(target, malformed=malformed)
     if predecessor_id is None:
         return all_idrs
     return _traverse_predecessor_chain(all_idrs, predecessor_id)
 
 
-def _parse_idr_file(target: Path) -> list[PrecogIDR]:
+def _parse_idr_file(target: Path,
+                    malformed: list[int] | None = None) -> list[PrecogIDR]:
     """Parse every JSONL line of ``target`` into a ``PrecogIDR`` (file order).
 
     ``if k in d`` is the back-compat key: legacy records predate optional fields
     (e.g. ``decision_anatomy``). Without the guard a missing key raises KeyError →
     the ``except`` below would SILENTLY DROP the legacy record from the chain.
     Optional fields fall back to their dataclass defaults instead.
+
+    A skipped line must never be silent to a VERIFIER: a line that fails to
+    parse is a record that vanished from the chain. Pass ``malformed`` to
+    collect the 1-based line numbers of every skipped non-empty line —
+    ``verify`` surfaces the count so corruption cannot hide inside a skip.
     """
     all_idrs: list[PrecogIDR] = []
     with open(target, encoding="utf-8") as fh:
-        for line in fh:
+        for line_no, line in enumerate(fh, start=1):
             line = line.strip()
             if not line:
                 continue
@@ -333,6 +340,8 @@ def _parse_idr_file(target: Path) -> list[PrecogIDR]:
                     k: d[k] for k in PrecogIDR.__dataclass_fields__ if k in d
                 }))
             except (json.JSONDecodeError, KeyError, TypeError):
+                if malformed is not None:
+                    malformed.append(line_no)
                 continue
     return all_idrs
 

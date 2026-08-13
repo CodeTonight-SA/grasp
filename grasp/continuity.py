@@ -1,0 +1,169 @@
+"""Continuity receipts — so VERIFIED means complete-or-fail.
+
+The defect this closes (internal red-team, 2026-08-13): ``grasp verify``
+recomputes the Merkle root over whatever the ledger currently contains, so
+deleting the newest records — or rewriting one and re-sealing it with the
+local key — yields a smaller or different chain that is internally consistent
+and still reads VERIFIED. The anchor proof for the OLD root then merely reads
+"no proof on disk" for the new root, which is indistinguishable from "never
+anchored". A verifier that prints VERIFIED over a truncated log is not a
+known limitation; it is a false claim emitted by the tool itself.
+
+A continuity receipt closes the loop. At anchor time, next to the stamped
+root file, we write the full sorted leaf set (content addresses) that the
+root commits to, plus the chain tip. At verify time the anchored set must be
+a SUBSET of the current set: an anchored record that has vanished
+(truncation) or changed (its content address moved — including a key-holder
+rewrite that re-seals correctly) fails loudly.
+
+The receipt inherits the anchor's integrity rather than adding a new trust
+root: its ``merkle_root`` must recompute exactly from its own ``leaves``
+(arithmetic, not judgement), and its filename is derived from that root by
+the same digest rule as the stamped ``root-*.txt`` / ``.ots`` pair — so a
+doctored leaf list breaks the recompute, and a doctored root no longer names
+its own proof.
+
+Trust honesty, stated once and surfaced by the verifier:
+
+- Receipts protect records that were anchored. Records appended after the
+  newest receipt are covered by the NEXT anchor — the window between anchors
+  is a stated limit, not a hidden one.
+- No receipts on disk (a legacy anchor, a fresh install) reports
+  ``no-receipts`` — never a manufactured pass, never a manufactured failure.
+- A receipt that fails its own arithmetic reports ``receipt-corrupt`` and
+  takes ``ok`` away: a corrupt integrity artefact is itself a red flag.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from grasp.idr_forest import _forest_leaves, forest_merkle_root
+from grasp.merkle import merkle_root as _merkle_root
+
+RECEIPT_KIND = "grasp-continuity-receipt"
+RECEIPT_SUFFIX = ".receipt.json"
+_MISSING_SAMPLE_CAP = 3
+
+
+def current_leaf_set(forest: Any) -> set:
+    """The forest's leaf set, for callers that must not touch private names."""
+    return set(_forest_leaves(forest))
+
+
+def _root_digest12(merkle_root_hex: str) -> str:
+    """The same locator rule as ``BitcoinOTSAdapter._proof_path`` — one root,
+    one family of files: ``root-<d12>.txt`` / ``.txt.ots`` / ``.receipt.json``."""
+    return hashlib.sha256(merkle_root_hex.encode("utf-8")).hexdigest()[:12]
+
+
+def receipt_path(merkle_root_hex: str, storage_root: Path) -> Path:
+    return storage_root / "ots" / (
+        f"root-{_root_digest12(merkle_root_hex)}{RECEIPT_SUFFIX}")
+
+
+def build_receipt(forest: Any, chain: list) -> dict:
+    """A pure snapshot of what this anchor commits to. No I/O."""
+    leaves = _forest_leaves(forest)
+    return {
+        "kind": RECEIPT_KIND,
+        "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "merkle_root": forest_merkle_root(forest),
+        "leaf_count": len(leaves),
+        "leaves": leaves,
+        "tip_id": chain[-1].id if chain else None,
+        "tip_ts": chain[-1].ts if chain else None,
+    }
+
+
+def write_receipt(receipt: dict, storage_root: Path) -> Path:
+    """Atomic write (tmp + rename), so a crash never leaves a half receipt."""
+    target = receipt_path(receipt["merkle_root"], storage_root)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_text(json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, target)
+    return target
+
+
+def _recomputes(receipt: dict) -> bool:
+    """Does the receipt's root recompute from its own leaves? Arithmetic only."""
+    leaves = receipt.get("leaves")
+    if not isinstance(leaves, list) or not all(isinstance(x, str) for x in leaves):
+        return False
+    recomputed = _merkle_root([x.encode("utf-8") for x in sorted(leaves)])
+    return recomputed == receipt.get("merkle_root")
+
+
+def load_receipts(storage_root: Path) -> tuple[list[dict], list[str]]:
+    """(parseable receipts sorted oldest→newest, unparseable file names)."""
+    ots_dir = storage_root / "ots"
+    receipts: list[dict] = []
+    unreadable: list[str] = []
+    if not ots_dir.is_dir():
+        return receipts, unreadable
+    for path in sorted(ots_dir.glob(f"root-*{RECEIPT_SUFFIX}")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("receipt is not an object")
+        except (OSError, ValueError, json.JSONDecodeError):
+            unreadable.append(path.name)
+            continue
+        data["_path"] = str(path)
+        receipts.append(data)
+    receipts.sort(key=lambda r: str(r.get("created_utc", "")))
+    return receipts, unreadable
+
+
+def check_continuity(current_leaves: set[str], storage_root: Path) -> dict:
+    """Is every anchored record still present, byte-for-byte, in the ledger?
+
+    Judged against the NEWEST receipt — the strongest commitment made. The
+    verdict never blends axes: ``no-receipts`` is absence of a commitment,
+    ``receipt-corrupt`` is a commitment that fails its own arithmetic,
+    ``broken`` is a commitment the current ledger no longer honours, and
+    ``ok`` carries the counts that prove it.
+    """
+    receipts, unreadable = load_receipts(storage_root)
+    out: dict[str, Any] = {"current_leaf_count": len(current_leaves)}
+    if unreadable:
+        out["unreadable_receipts"] = unreadable
+    if not receipts:
+        out["status"] = "receipt-corrupt" if unreadable else "no-receipts"
+        out["detail"] = (
+            "a continuity receipt exists but cannot be read — treat as tamper"
+            if unreadable else
+            "no continuity receipts on disk — nothing was anchored with a "
+            "receipt yet, so completeness since an anchor cannot be checked")
+        return out
+    newest = receipts[-1]
+    out["receipt"] = newest.get("_path")
+    out["receipt_created_utc"] = newest.get("created_utc")
+    if not _recomputes(newest):
+        out["status"] = "receipt-corrupt"
+        out["detail"] = ("the newest continuity receipt does not recompute to "
+                         "its own merkle_root — the receipt was altered")
+        return out
+    anchored = set(newest["leaves"])
+    out["anchored_leaf_count"] = len(anchored)
+    missing = sorted(anchored - current_leaves)
+    if missing:
+        out["status"] = "broken"
+        out["missing"] = len(missing)
+        out["missing_sample"] = missing[:_MISSING_SAMPLE_CAP]
+        out["detail"] = (
+            f"{len(missing)} anchored record(s) are no longer in the ledger — "
+            "the chain was truncated or a record was rewritten since the "
+            f"anchor of {newest.get('created_utc')}")
+        return out
+    out["status"] = "ok"
+    out["detail"] = (
+        f"all {len(anchored)} anchored records are present; "
+        f"{len(current_leaves) - len(anchored)} newer record(s) await the "
+        "next anchor")
+    return out
