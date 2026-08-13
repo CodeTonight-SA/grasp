@@ -172,7 +172,7 @@ def render_footer(spec: dict, *, model: str, mode: str | None = None,
         "grounding": prov["grounding_rate"],
     })
     fineprint = (
-        f"┆ inspect  {artifact.as_uri()}",
+        f"┆ inspect  {artifact}",  # plain path — file:// is a dead click surface in linkifying terminals (probed 2026-08-13)
         f"┆ or run   grasp open {artifact.stem}",
     )
     return FooterResult(emitted=True, reason="salient claims proven",

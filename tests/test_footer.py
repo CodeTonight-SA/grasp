@@ -103,8 +103,12 @@ def test_salient_footer_proves_and_links(home):
     assert "✓1 ≈0 ✗0" in result.card
     assert "█" in result.card                   # grounding bar rendered
     assert result.card.splitlines()[-1].startswith("╰─ facta, non verba")
-    # fineprint: plain-URL inspect row + the real fallback command
-    assert result.fineprint[0].startswith("┆ inspect  file://")
+    # fineprint: plain-PATH inspect row + the real fallback command.
+    # Inverted 2026-08-13 (never deleted): the old assertion pinned the
+    # file:// URI form, which is a dead click surface in linkifying
+    # terminals — the plain path is the one that links.
+    assert result.fineprint[0].startswith("┆ inspect  /")
+    assert "file://" not in result.fineprint[0]
     assert result.fineprint[1].startswith("┆ or run   grasp open ")
     assert result.artifact_path.endswith(".html")
     html = open(result.artifact_path, encoding="utf-8").read()

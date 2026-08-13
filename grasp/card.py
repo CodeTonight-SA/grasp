@@ -34,6 +34,7 @@ _TITLES = {
     "grasp_status": "status",
     "grasp_activate": "activated — chain born",
     "grasp_footer": "prove-it — this response",
+    "grasp_witness": "WITNESS",
     "grasp_honesty": "provider honesty — floor-hold scoreboard",
     "grasp_attest": "self-attestation — grasp proves grasp",
 }
@@ -43,7 +44,8 @@ _TITLES = {
 # construction) — the provider-honesty ledger populates them downstream.
 _PREFERRED = (
     "status", "model", "verified", "claims", "honesty", "grounding_rate",
-    "grounding", "quote", "claim", "source_path", "source_sha256", "sha256",
+    "grounding", "decision", "anchor", "verify",
+    "quote", "claim", "source_path", "source_sha256", "sha256",
     "id", "idr_id", "context_id", "head", "depth", "ts", "entries", "count",
     "filed_safe",
 )
@@ -112,7 +114,8 @@ def _footer_line() -> str:
 def _glyph(tool: str, result: dict) -> str:
     if not result.get("ok", False):
         return "✗"
-    if tool in ("grasp_prove_claim", "grasp_footer") and "verified" in result:
+    if (tool in ("grasp_prove_claim", "grasp_footer", "grasp_witness")
+            and "verified" in result):
         return "✓" if result.get("verified") else "✗"
     return "●"
 
