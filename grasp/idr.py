@@ -179,15 +179,21 @@ def _sign_real(envelope: dict) -> dict:
     stored here because IDRs are independently signed (predecessor linkage is
     via ``predecessor_idr`` in the body, not a sequential chain hash).
     """
+    from grasp.keys import load_signing_seeds, signing_scheme
+    from grasp import signing as _asym
     body = {k: v for k, v in envelope.items() if k != "audit"}
     entry_hash = compute_entry_hash(body)
-    key = signing_key()
-    sig = hmac.new(key, entry_hash.encode(), hashlib.sha256).hexdigest()
-    return {
-        "scheme": "hmac-sha256",
-        "key_fingerprint": hashlib.sha256(key).hexdigest()[:8],
-        "signature": "hmac-sha256:" + sig,
-    }
+    scheme = signing_scheme()
+    if scheme == "hmac-sha256":
+        key = signing_key()
+        sig = hmac.new(key, entry_hash.encode(), hashlib.sha256).hexdigest()
+        return {
+            "scheme": scheme,
+            "key_fingerprint": hashlib.sha256(key).hexdigest()[:8],
+            "signature": "hmac-sha256:" + sig,
+        }
+    ed_seed, ml_seed = load_signing_seeds(scheme)
+    return _asym.sign(entry_hash, scheme, ed25519_seed=ed_seed, ml_dsa_seed=ml_seed)
 
 
 def _resolve_anatomy_dict(decision_anatomy: Any) -> dict[str, Any] | None:

@@ -88,6 +88,35 @@ def _cmd_anchor(args: argparse.Namespace) -> int:
     return 1
 
 
+def _print_key(scheme: str, seed: bytes, pub: bytes) -> None:
+    """Print a generated public key + fingerprint for publication. The private
+    seed is already persisted (0600) and is never printed."""
+    from grasp import signing as _signing
+    fp = _signing.pubkey_fingerprint(pub)
+    print(f"[{scheme}]")
+    print(f"  public key (hex): {pub.hex()}")
+    print(f"  fingerprint     : {fp}")
+    print(f"  private seed    : persisted 0600 at $GRASP_HOME/keys/{scheme}.key")
+    print()
+
+
+def _cmd_keygen(args: argparse.Namespace) -> int:
+    """Generate + persist an asymmetric signing keypair; print the public key
+    and its fingerprint for publication (the verification-key half of the
+    custody split — roadmap item 1)."""
+    from grasp.keys import persist_asymmetric_keypair
+    home = Path(args.home) if args.home else None
+    scheme = args.scheme
+    if scheme == "ed25519+ml-dsa-65":
+        for sub in ("ed25519", "ml-dsa-65"):
+            seed, pub = persist_asymmetric_keypair(sub, home=home)
+            _print_key(sub, seed, pub)
+        return 0
+    seed, pub = persist_asymmetric_keypair(scheme, home=home)
+    _print_key(scheme, seed, pub)
+    return 0
+
+
 def _default_licenses_root() -> Path:
     """Where the install's terms live: the checkout root when running from
     a git tree or editable install, else the current directory (wheel
@@ -297,6 +326,25 @@ def _add_honesty_commands(sub) -> None:
     attest.set_defaults(func=_cmd_attest)
 
 
+def _add_keygen_commands(sub) -> None:
+    keygen = sub.add_parser(
+        "keygen",
+        help="generate an Ed25519 / ML-DSA-65 signing keypair and print its "
+             "public key for publication",
+    )
+    keygen.add_argument(
+        "--scheme",
+        choices=["ed25519", "ml-dsa-65", "ed25519+ml-dsa-65"],
+        default="ed25519+ml-dsa-65",
+        help="signing scheme (default: dual ed25519 + ML-DSA-65)",
+    )
+    keygen.add_argument(
+        "--home", metavar="PATH",
+        help="GRASP state directory (default: $GRASP_HOME or ~/.grasp)",
+    )
+    keygen.set_defaults(func=_cmd_keygen)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="grasp",
@@ -310,6 +358,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_activation_commands(sub)
     _add_witness_commands(sub)
     _add_honesty_commands(sub)
+    _add_keygen_commands(sub)
     return parser
 
 
