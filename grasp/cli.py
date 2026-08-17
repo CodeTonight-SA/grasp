@@ -51,6 +51,18 @@ def _verify_failure_reason(out: dict) -> str:
     if cont.get("status") == "receipt-corrupt":
         return ("VERIFY FAILED: CONTINUITY — the continuity receipt itself "
                 "does not verify (altered or unreadable). See 'continuity'.")
+    if cont.get("status") == "refuse-on-gap":
+        return ("VERIFY FAILED: CONTINUITY — refuse-on-gap: no continuity "
+                "receipts exist, so completeness cannot be established. "
+                "See 'continuity'.")
+    if cont.get("status") == "expected-root-missing":
+        return ("VERIFY FAILED: CONTINUITY — an anchored root is pinned "
+                "out-of-band but no continuity receipts exist on disk "
+                "(receipts deleted). See 'continuity'.")
+    if cont.get("status") == "expected-root-mismatch":
+        return ("VERIFY FAILED: CONTINUITY — the pinned expected root does "
+                "not match the newest continuity receipt (receipt rollback "
+                "or replacement). See 'continuity'.")
     if out.get("anchored") is False:
         n = out.get("unanchored", 0)
         return (
@@ -64,7 +76,11 @@ def _verify_failure_reason(out: dict) -> str:
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
-    out = tool_verify({"anchor": getattr(args, "anchor", False)})
+    out = tool_verify({
+        "anchor": getattr(args, "anchor", False),
+        "refuse_on_gap": getattr(args, "refuse_on_gap", False),
+        "expected_root": getattr(args, "expected_root", None),
+    })
     _emit(out, as_json=args.json)
     if out.get("ok"):
         return 0
@@ -207,6 +223,15 @@ def _add_ledger_commands(sub) -> None:
              "which tier answered (a node, or agreement between independent "
              "block-header sources) and what that verdict trusts. Uses the "
              "network, so it is off by default")
+    verify.add_argument(
+        "--refuse-on-gap", action="store_true",
+        help="fail verification when no continuity receipts exist (completeness "
+             "cannot be established) instead of reporting it")
+    verify.add_argument(
+        "--expected-root", metavar="HEX",
+        help="pin the latest anchored Merkle root out-of-band: fail when the "
+             "newest continuity receipt does not match, or when receipts are "
+             "missing (closes the deleted-receipts residual)")
     verify.set_defaults(func=_cmd_verify)
     anchor = sub.add_parser(
         "anchor",

@@ -261,9 +261,16 @@ def tool_verify(_args: dict) -> dict:
     # rewriting-and-resealing a record yields a smaller/different chain that
     # is internally consistent and still reads VERIFIED (red-team 2026-08-13).
     # ``no-receipts`` (legacy anchors, fresh installs) is honest absence and
-    # never fails — but it is REPORTED, never blended into a pass.
+    # fails only when the deployment demands completeness: refuse-on-gap mode or
+    # an out-of-band pinned expected root (GRASP_EXPECTED_ROOT / --expected-root)
+    # turn missing or rolled-back receipts into hard failures.
     current = current_leaf_set(forest) if forest is not None else set()
-    continuity = check_continuity(current, grasp_home() / "storage")
+    continuity = check_continuity(
+        current,
+        grasp_home() / "storage",
+        expected_root=_args.get("expected_root"),
+        refuse_on_gap=_args.get("refuse_on_gap"),
+    )
     out["continuity"] = continuity
     continuity_ok = continuity["status"] in ("ok", "no-receipts")
     out["ok"] = tamper_free and anchored and not disproved and continuity_ok

@@ -120,8 +120,49 @@ def load_receipts(storage_root: Path) -> tuple[list[dict], list[str]]:
     return receipts, unreadable
 
 
-def check_continuity(current_leaves: set[str], storage_root: Path) -> dict:
+EXPECTED_ROOT_FILE = "expected-root.json"
+
+
+def pinned_expected_root(storage_root: Path) -> str | None:
+    """The out-of-band pinned latest anchored root, if the deployment declared
+    one. Sources: ``GRASP_EXPECTED_ROOT`` env, else ``<storage>/ots/expected-
+    root.json`` (``{"merkle_root": "<hex>"}``). A pinned root turns missing and
+    rolled-back receipts into hard failures (roadmap item 3)."""
+    env = os.environ.get("GRASP_EXPECTED_ROOT", "").strip()
+    if env:
+        return env
+    path = storage_root / "ots" / EXPECTED_ROOT_FILE
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            root = data.get("merkle_root") if isinstance(data, dict) else None
+            if isinstance(root, str) and root:
+                return root
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
+    return None
+
+
+def refuse_on_gap_requested() -> bool:
+    """Has the deployment demanded that 'no receipts' FAIL verification?"""
+    env = os.environ.get("GRASP_REFUSE_ON_GAP", "").strip().lower()
+    return env in ("1", "true", "yes", "on")
+
+
+
+def check_continuity(
+    current_leaves: set[str],
+    storage_root: Path,
+    *,
+    expected_root: str | None = None,
+    refuse_on_gap: bool | None = None,
+) -> dict:
     """Is every anchored record still present, byte-for-byte, in the ledger?
+
+    ``expected_root`` (or the out-of-band pin) turns missing receipts and
+    rolled-back receipts into hard failures — closing the 'delete the receipts
+    too' residual (roadmap items 3-4). ``refuse_on_gap`` makes 'no receipts'
+    fail instead of being reported.
 
     Judged against the NEWEST receipt — the strongest commitment made. The
     verdict never blends axes: ``no-receipts`` is absence of a commitment,
@@ -133,17 +174,39 @@ def check_continuity(current_leaves: set[str], storage_root: Path) -> dict:
     out: dict[str, Any] = {"current_leaf_count": len(current_leaves)}
     if unreadable:
         out["unreadable_receipts"] = unreadable
+    if expected_root is None:
+        expected_root = pinned_expected_root(storage_root)
+    if refuse_on_gap is None:
+        refuse_on_gap = refuse_on_gap_requested()
     if not receipts:
-        out["status"] = "receipt-corrupt" if unreadable else "no-receipts"
-        out["detail"] = (
-            "a continuity receipt exists but cannot be read — treat as tamper"
-            if unreadable else
-            "no continuity receipts on disk — nothing was anchored with a "
-            "receipt yet, so completeness since an anchor cannot be checked")
+        if unreadable:
+            out["status"] = "receipt-corrupt"
+            out["detail"] = "a continuity receipt exists but cannot be read — treat as tamper"
+        elif expected_root is not None:
+            out["status"] = "expected-root-missing"
+            out["expected_root"] = expected_root
+            out["detail"] = ("an anchored root is pinned out-of-band, but no continuity "
+                             "receipts exist on disk — the receipts were deleted, so "
+                             "completeness since the pinned anchor cannot be checked")
+        elif refuse_on_gap:
+            out["status"] = "refuse-on-gap"
+            out["detail"] = ("no continuity receipts on disk and refuse-on-gap is set — "
+                             "completeness since an anchor cannot be established, so "
+                             "verification refuses instead of passing")
+        else:
+            out["status"] = "no-receipts"
+            out["detail"] = ("no continuity receipts on disk — nothing was anchored with a "
+                             "receipt yet, so completeness since an anchor cannot be checked")
         return out
     newest = receipts[-1]
     out["receipt"] = newest.get("_path")
     out["receipt_created_utc"] = newest.get("created_utc")
+    if expected_root is not None and newest.get("merkle_root") != expected_root:
+        out["status"] = "expected-root-mismatch"
+        out["expected_root"] = expected_root
+        out["detail"] = ("the pinned expected root does not match the newest receipt's "
+                         "root — the receipt set was rolled back or replaced")
+        return out
     if not _recomputes(newest):
         out["status"] = "receipt-corrupt"
         out["detail"] = ("the newest continuity receipt does not recompute to "

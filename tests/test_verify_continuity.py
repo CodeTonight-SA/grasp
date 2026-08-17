@@ -220,3 +220,58 @@ def test_tool_anchor_empty_ledger(home):
     out = tool_anchor({})
     assert out["ok"] is False
     assert "empty ledger" in out["detail"]
+
+
+# --------------------------------------------------------------------------
+# Roadmap items 3-4: expected-root pinning + refuse-on-gap mode.
+# --------------------------------------------------------------------------
+
+
+def _receipt_root(home):
+    receipts, _ = load_receipts(home / "storage")
+    assert receipts, "expected at least one receipt"
+    return receipts[-1]["merkle_root"]
+
+
+def test_refuse_on_gap_fails_without_receipts(home):
+    _grow_chain(3)
+    out = tool_verify({"refuse_on_gap": True})
+    assert out["ok"] is False
+    assert out["continuity"]["status"] == "refuse-on-gap"
+
+
+def test_expected_root_missing_fails(home):
+    _grow_chain(3)
+    out = tool_verify({"expected_root": "ab" * 32})
+    assert out["ok"] is False
+    assert out["continuity"]["status"] == "expected-root-missing"
+
+
+def test_expected_root_match_passes(home):
+    _grow_chain(3)
+    _write_receipt_for_current_chain()
+    root = _receipt_root(home)
+    out = tool_verify({"expected_root": root})
+    assert out["ok"] is True
+    assert out["continuity"]["status"] == "ok"
+
+
+def test_expected_root_mismatch_fails(home):
+    _grow_chain(3)
+    _write_receipt_for_current_chain()
+    out = tool_verify({"expected_root": "ab" * 32})
+    assert out["ok"] is False
+    assert out["continuity"]["status"] == "expected-root-mismatch"
+
+
+def test_deleted_receipts_fail_against_pinned_root(home, monkeypatch):
+    _grow_chain(3)
+    _write_receipt_for_current_chain()
+    root = _receipt_root(home)
+    # delete every receipt — the exact attack the out-of-band pin exists to catch
+    for p in (home / "storage" / "ots").glob("*.receipt.json"):
+        p.unlink()
+    monkeypatch.setenv("GRASP_EXPECTED_ROOT", root)
+    out = tool_verify({})
+    assert out["ok"] is False
+    assert out["continuity"]["status"] == "expected-root-missing"
