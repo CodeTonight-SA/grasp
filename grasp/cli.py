@@ -51,6 +51,18 @@ def _verify_failure_reason(out: dict) -> str:
     if cont.get("status") == "receipt-corrupt":
         return ("VERIFY FAILED: CONTINUITY — the continuity receipt itself "
                 "does not verify (altered or unreadable). See 'continuity'.")
+    if cont.get("status") == "refuse-on-gap":
+        return ("VERIFY FAILED: CONTINUITY — refuse-on-gap: no continuity "
+                "receipts exist, so completeness cannot be established. "
+                "See 'continuity'.")
+    if cont.get("status") == "expected-root-missing":
+        return ("VERIFY FAILED: CONTINUITY — an anchored root is pinned "
+                "out-of-band but no continuity receipts exist on disk "
+                "(receipts deleted). See 'continuity'.")
+    if cont.get("status") == "expected-root-mismatch":
+        return ("VERIFY FAILED: CONTINUITY — the pinned expected root does "
+                "not match the newest continuity receipt (receipt rollback "
+                "or replacement). See 'continuity'.")
     if out.get("anchored") is False:
         n = out.get("unanchored", 0)
         return (
@@ -58,13 +70,23 @@ def _verify_failure_reason(out: dict) -> str:
             "anchor (ci:/human:/council:/hypo:). Not tampered, but not "
             "exogenously anchored — see 'unanchored'/'anchored'."
         )
+    if out.get("strict") and "degraded" in (out.get("decision_chain"), out.get("belief_chain")):
+        counts = out.get("scheme_counts") or {}
+        return ("VERIFY FAILED: STRICT — record(s) use a scheme this build "
+                "cannot fully check: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) +
+                ". Migrate them or drop --strict.")
     if "degraded" in (out.get("decision_chain"), out.get("belief_chain")):
         return "VERIFY DEGRADED: a record uses a scheme this build cannot fully check."
     return "VERIFY FAILED."
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
-    out = tool_verify({"anchor": getattr(args, "anchor", False)})
+    out = tool_verify({
+        "anchor": getattr(args, "anchor", False),
+        "refuse_on_gap": getattr(args, "refuse_on_gap", False),
+        "expected_root": getattr(args, "expected_root", None),
+        "strict": getattr(args, "strict", False),
+    })
     _emit(out, as_json=args.json)
     if out.get("ok"):
         return 0
@@ -86,6 +108,35 @@ def _cmd_anchor(args: argparse.Namespace) -> int:
         return 0
     print(f"ANCHOR FAILED: {out.get('detail', 'unknown')}", file=sys.stderr)
     return 1
+
+
+def _print_key(scheme: str, seed: bytes, pub: bytes) -> None:
+    """Print a generated public key + fingerprint for publication. The private
+    seed is already persisted (0600) and is never printed."""
+    from grasp import signing as _signing
+    fp = _signing.pubkey_fingerprint(pub)
+    print(f"[{scheme}]")
+    print(f"  public key (hex): {pub.hex()}")
+    print(f"  fingerprint     : {fp}")
+    print(f"  private seed    : persisted 0600 at $GRASP_HOME/keys/{scheme}.key")
+    print()
+
+
+def _cmd_keygen(args: argparse.Namespace) -> int:
+    """Generate + persist an asymmetric signing keypair; print the public key
+    and its fingerprint for publication (the verification-key half of the
+    custody split — roadmap item 1)."""
+    from grasp.keys import persist_asymmetric_keypair
+    home = Path(args.home) if args.home else None
+    scheme = args.scheme
+    if scheme == "ed25519+ml-dsa-65":
+        for sub in ("ed25519", "ml-dsa-65"):
+            seed, pub = persist_asymmetric_keypair(sub, home=home)
+            _print_key(sub, seed, pub)
+        return 0
+    seed, pub = persist_asymmetric_keypair(scheme, home=home)
+    _print_key(scheme, seed, pub)
+    return 0
 
 
 def _default_licenses_root() -> Path:
@@ -173,11 +224,25 @@ def _add_ledger_commands(sub) -> None:
     verify.add_argument("--json", action="store_true",
                         help="single-line JSON (default: pretty)")
     verify.add_argument(
+        "--strict", action="store_true",
+        help="refuse loudly when any record uses a scheme this build cannot "
+             "fully check (legacy placeholder / unverifiable) — the F4 "
+             "migration gate")
+    verify.add_argument(
         "--anchor", action="store_true",
         help="also confirm the Merkle root landed in a Bitcoin block, and say "
              "which tier answered (a node, or agreement between independent "
              "block-header sources) and what that verdict trusts. Uses the "
              "network, so it is off by default")
+    verify.add_argument(
+        "--refuse-on-gap", action="store_true",
+        help="fail verification when no continuity receipts exist (completeness "
+             "cannot be established) instead of reporting it")
+    verify.add_argument(
+        "--expected-root", metavar="HEX",
+        help="pin the latest anchored Merkle root out-of-band: fail when the "
+             "newest continuity receipt does not match, or when receipts are "
+             "missing (closes the deleted-receipts residual)")
     verify.set_defaults(func=_cmd_verify)
     anchor = sub.add_parser(
         "anchor",
@@ -297,6 +362,25 @@ def _add_honesty_commands(sub) -> None:
     attest.set_defaults(func=_cmd_attest)
 
 
+def _add_keygen_commands(sub) -> None:
+    keygen = sub.add_parser(
+        "keygen",
+        help="generate an Ed25519 / ML-DSA-65 signing keypair and print its "
+             "public key for publication",
+    )
+    keygen.add_argument(
+        "--scheme",
+        choices=["ed25519", "ml-dsa-65", "ed25519+ml-dsa-65"],
+        default="ed25519+ml-dsa-65",
+        help="signing scheme (default: dual ed25519 + ML-DSA-65)",
+    )
+    keygen.add_argument(
+        "--home", metavar="PATH",
+        help="GRASP state directory (default: $GRASP_HOME or ~/.grasp)",
+    )
+    keygen.set_defaults(func=_cmd_keygen)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="grasp",
@@ -310,6 +394,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_activation_commands(sub)
     _add_witness_commands(sub)
     _add_honesty_commands(sub)
+    _add_keygen_commands(sub)
     return parser
 
 

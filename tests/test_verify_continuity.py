@@ -220,3 +220,94 @@ def test_tool_anchor_empty_ledger(home):
     out = tool_anchor({})
     assert out["ok"] is False
     assert "empty ledger" in out["detail"]
+
+
+# --------------------------------------------------------------------------
+# Roadmap items 3-4: expected-root pinning + refuse-on-gap mode.
+# --------------------------------------------------------------------------
+
+
+def _receipt_root(home):
+    receipts, _ = load_receipts(home / "storage")
+    assert receipts, "expected at least one receipt"
+    return receipts[-1]["merkle_root"]
+
+
+def test_refuse_on_gap_fails_without_receipts(home):
+    _grow_chain(3)
+    out = tool_verify({"refuse_on_gap": True})
+    assert out["ok"] is False
+    assert out["continuity"]["status"] == "refuse-on-gap"
+
+
+def test_expected_root_missing_fails(home):
+    _grow_chain(3)
+    out = tool_verify({"expected_root": "ab" * 32})
+    assert out["ok"] is False
+    assert out["continuity"]["status"] == "expected-root-missing"
+
+
+def test_expected_root_match_passes(home):
+    _grow_chain(3)
+    _write_receipt_for_current_chain()
+    root = _receipt_root(home)
+    out = tool_verify({"expected_root": root})
+    assert out["ok"] is True
+    assert out["continuity"]["status"] == "ok"
+
+
+def test_expected_root_mismatch_fails(home):
+    _grow_chain(3)
+    _write_receipt_for_current_chain()
+    out = tool_verify({"expected_root": "ab" * 32})
+    assert out["ok"] is False
+    assert out["continuity"]["status"] == "expected-root-mismatch"
+
+
+def test_deleted_receipts_fail_against_pinned_root(home, monkeypatch):
+    _grow_chain(3)
+    _write_receipt_for_current_chain()
+    root = _receipt_root(home)
+    # delete every receipt — the exact attack the out-of-band pin exists to catch
+    for p in (home / "storage" / "ots").glob("*.receipt.json"):
+        p.unlink()
+    monkeypatch.setenv("GRASP_EXPECTED_ROOT", root)
+    out = tool_verify({})
+    assert out["ok"] is False
+    assert out["continuity"]["status"] == "expected-root-missing"
+
+
+# --------------------------------------------------------------------------
+# Roadmap item 2: the anchored leaf commits to record timestamps.
+# --------------------------------------------------------------------------
+
+
+def test_receipt_is_leaf_version_2(home):
+    _grow_chain(2)
+    p = _write_receipt_for_current_chain()
+    receipt = json.loads(p.read_text(encoding="utf-8"))
+    assert receipt.get("leaf_version") == 2
+    chain = read_idr_chain()
+    forest = build_chain_forest(chain, genesis_anchor=chain[0].predecessor_idr)
+    from grasp.idr_forest import _forest_leaves_ts
+    assert receipt["leaves"] == _forest_leaves_ts(forest)
+
+
+def test_ts_rewrite_moves_anchored_leaf(home):
+    """The key-holder backdating attack: rewrite a record's timestamp and
+    re-seal with the local key. The content address is unchanged (ts is not in
+    it) — only the timestamp-aware leaf catches it. Mutation-sensitive: this
+    fails if leaf_version 2 is reverted to bare content-address leaves."""
+    from grasp.idr import _sign_real
+    _grow_chain(3)
+    _write_receipt_for_current_chain()
+    ledger = _ledger(home)
+    lines = ledger.read_text(encoding="utf-8").splitlines()
+    row = json.loads(lines[-1])
+    row["ts"] = "2020-01-01T00:00:00Z"  # backdate the newest record
+    row["audit"] = _sign_real({k: v for k, v in row.items() if k != "audit"})
+    lines[-1] = json.dumps(row, sort_keys=True)
+    ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out = tool_verify({})
+    assert out["ok"] is False
+    assert out["continuity"]["status"] == "broken"

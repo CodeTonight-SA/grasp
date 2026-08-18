@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 from dataclasses import asdict
 from typing import Any
@@ -37,9 +38,11 @@ from grasp.home import grasp_home
 from grasp.idr import build_idr, append_idr, content_addr, read_idr_chain
 from grasp.idr_forest import (
     IdrForestError,
+    _forest_leaves_ts,
     build_chain_forest,
     find_unanchored,
     forest_merkle_root,
+    forest_merkle_root_ts,
     is_admissible_anchor,
     verify_chain_integrity,
 )
@@ -215,6 +218,7 @@ def _verify_decision_chain(chain: list, out: dict) -> tuple[bool, Any]:
         return False, None
     out["decision_chain"] = verify_chain_integrity(forest).value
     out["merkle_root"] = forest_merkle_root(forest)
+    out["merkle_root_ts"] = forest_merkle_root_ts(forest)
     unanchored = find_unanchored(forest)
     out["anchored"] = not unanchored
     if unanchored:
@@ -252,8 +256,8 @@ def tool_verify(_args: dict) -> dict:
     # real block does not carry — can take ``ok`` away; a proof still waiting
     # on a block is ordinary and leaves ``ok`` untouched.
     disproved = False
-    if _args.get("anchor") and out.get("merkle_root"):
-        out["anchor_check"] = _anchor_check(out["merkle_root"])
+    if _args.get("anchor") and out.get("merkle_root_ts"):
+        out["anchor_check"] = _anchor_check(out["merkle_root_ts"])
         disproved = out["anchor_check"]["disproved"]
     # FOURTH axis — continuity: every record the last anchor committed to must
     # still be present, byte-for-byte, in the current ledger. This is what
@@ -261,13 +265,42 @@ def tool_verify(_args: dict) -> dict:
     # rewriting-and-resealing a record yields a smaller/different chain that
     # is internally consistent and still reads VERIFIED (red-team 2026-08-13).
     # ``no-receipts`` (legacy anchors, fresh installs) is honest absence and
-    # never fails — but it is REPORTED, never blended into a pass.
+    # fails only when the deployment demands completeness: refuse-on-gap mode or
+    # an out-of-band pinned expected root (GRASP_EXPECTED_ROOT / --expected-root)
+    # turn missing or rolled-back receipts into hard failures.
     current = current_leaf_set(forest) if forest is not None else set()
-    continuity = check_continuity(current, grasp_home() / "storage")
+    current_ts = set(_forest_leaves_ts(forest)) if forest is not None else set()
+    continuity = check_continuity(
+        current,
+        grasp_home() / "storage",
+        expected_root=_args.get("expected_root"),
+        refuse_on_gap=_args.get("refuse_on_gap"),
+        current_leaves_ts=current_ts,
+    )
     out["continuity"] = continuity
     continuity_ok = continuity["status"] in ("ok", "no-receipts")
+    # FIFTH axis — strict mode (F4): refuse loudly when ANY record uses a scheme
+    # this build cannot fully check (legacy placeholder, unverifiable asymmetric).
+    # ``ok`` already excludes degraded chains; strict adds the explicit signal + a
+    # per-scheme histogram naming exactly which records a migration must replace.
+    strict = bool(_args.get("strict")) or os.environ.get("GRASP_STRICT", "").strip().lower() in ("1", "true", "yes", "on")
+    degraded = "degraded" in (out.get("decision_chain"), out.get("belief_chain"))
+    out["strict"] = strict
+    out["degraded"] = degraded
+    if degraded:
+        out["scheme_counts"] = _scheme_counts(chain)
     out["ok"] = tamper_free and anchored and not disproved and continuity_ok
     return out
+
+
+def _scheme_counts(chain: list) -> dict[str, int]:
+    """Per-record audit-scheme histogram — names WHICH records a strict
+    migration must still replace (F4: placeholder-downgrade ambiguity)."""
+    counts: dict[str, int] = {}
+    for idr in chain:
+        scheme = idr.audit.get("scheme") if isinstance(idr.audit, dict) else "missing"
+        counts[scheme] = counts.get(scheme, 0) + 1
+    return counts
 
 
 def tool_anchor(_args: dict) -> dict:

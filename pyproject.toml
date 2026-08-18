@@ -34,6 +34,12 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/CodeTonight-SA/grasp"
 
+[project.optional-dependencies]
+# Ed25519 + ML-DSA-65 (FIPS 204) asymmetric signing. Optional: the hermetic
+# HMAC-SHA256 core runs with zero dependencies; asymmetric schemes degrade
+# (DEGRADED) rather than crash when this is absent.
+pqc = ["cryptography>=44"]
+
 [project.scripts]
 grasp = "grasp.cli:main"
 grasp-prove-it = "grasp.prove_it:main"

@@ -22,7 +22,6 @@ re-implement signing, chain hashing, or fixed-point iteration.
 from __future__ import annotations
 
 import hashlib
-import hmac as _hmac
 import json
 from dataclasses import dataclass, asdict, replace
 from typing import Iterator, Mapping
@@ -369,21 +368,42 @@ def _verify_node(idr: PrecogIDR) -> Verdict:
     # anatomy WAS signed in and stays in the body (tamper-checked).
     if body.get("decision_anatomy") is None:
         body.pop("decision_anatomy", None)
+    if body.get("output_hash") is None:
+        body.pop("output_hash", None)
     if scheme == "sha256-placeholder":
         if _sign_placeholder(body).get("signature") != idr.audit.get("signature"):
             return Verdict.BROKEN
         return Verdict.DEGRADED
+    entry_hash = compute_entry_hash(body)
     if scheme == "hmac-sha256":
-        entry_hash = compute_entry_hash(body)
-        key = signing_key()
-        # stored signature is always "hmac-sha256:<hex>" — _sign_real guarantees the prefix.
-        expected = "hmac-sha256:" + _hmac.new(key, entry_hash.encode(), hashlib.sha256).hexdigest()
-        return Verdict.VERIFIED if idr.audit.get("signature") == expected else Verdict.BROKEN
-    # Asymmetric / dual-signature schemes (e.g. "ed25519+ml-dsa-65") are an
-    # integration path: without their verifier + key custody installed, the
-    # record degrades to "could not verify" — consistent with the
-    # keys-unavailable path, never an unhandled exception, never VERIFIED.
+        from grasp import signing as _asym
+        return _asym.verify(entry_hash, idr.audit, hmac_key=signing_key())
+    if scheme in ("ed25519", "ml-dsa-65", "ed25519+ml-dsa-65"):
+        return _verify_asymmetric(entry_hash, idr.audit, scheme)
+    # Unknown schemes: monotone toward safe — never upgraded to VERIFIED, never
+    # an unhandled exception on a real on-disk record.
     return Verdict.DEGRADED
+
+
+def _verify_asymmetric(entry_hash: str, audit: dict, scheme: str) -> Verdict:
+    """Verify an asymmetric (Ed25519 / ML-DSA-65 / dual) audit block.
+
+    Resolves the published verification key by the record's key fingerprint
+    (trusted sources only), then delegates to grasp.signing.verify. A record
+    whose key cannot be resolved reads DEGRADED, never VERIFIED.
+    """
+    from grasp import signing as _asym
+    from grasp.keys import resolve_public_key
+    if scheme == "ed25519":
+        pub = resolve_public_key("ed25519", audit.get("key_fingerprint"))
+        return _asym.verify(entry_hash, audit, ed25519_pub=pub)
+    if scheme == "ml-dsa-65":
+        pub = resolve_public_key("ml-dsa-65", audit.get("key_fingerprint"))
+        return _asym.verify(entry_hash, audit, ml_dsa_pub=pub)
+    fps = audit.get("key_fingerprint") if isinstance(audit.get("key_fingerprint"), dict) else {}
+    e_pub = resolve_public_key("ed25519", fps.get("ed25519"))
+    m_pub = resolve_public_key("ml-dsa-65", fps.get("ml-dsa-65"))
+    return _asym.verify(entry_hash, audit, ed25519_pub=e_pub, ml_dsa_pub=m_pub)
 
 
 def find_unanchored(forest: Forest) -> tuple[str, ...]:
@@ -522,6 +542,30 @@ def forest_merkle_root(forest: Forest) -> str:
     """RFC-6962 Merkle root over the forest's node content-addresses. Empty forest
     ⇒ the canonical empty-tree root. Any node change moves the root."""
     return merkle_root([a.encode("utf-8") for a in _forest_leaves(forest)])
+
+
+def _forest_leaves_ts(forest: Forest) -> list[str]:
+    """Timestamp-aware Merkle leaves (anchor leaf version 2).
+
+    Each leaf commits to BOTH a node's content address AND its recorded
+    timestamp: ``sha256(content_addr + "\n" + ts)``. A key-holder rewriting a
+    timestamp post-signing keeps the content address but MOVES the leaf — which
+    continuity then reports as missing (roadmap item 2: the record's time
+    becomes an anchored fact, not operator-attested metadata). Sorted ⇒
+    deterministic across runs, like :func:`_forest_leaves`.
+    """
+    return sorted(
+        "sha256:" + hashlib.sha256(
+            (content_addr(asdict(node.idr)) + "\n" + str(node.idr.ts)).encode("utf-8")
+        ).hexdigest()
+        for node in forest.nodes.values()
+    )
+
+
+def forest_merkle_root_ts(forest: Forest) -> str:
+    """RFC-6962 Merkle root over the timestamp-aware leaves (leaf version 2) —
+    the root NEW anchors stamp, so the Bitcoin witness commits to record times."""
+    return merkle_root([a.encode("utf-8") for a in _forest_leaves_ts(forest)])
 
 
 def forest_inclusion_proof(forest: Forest, node_id: str) -> dict:

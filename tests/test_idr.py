@@ -136,5 +136,45 @@ def test_chain_traversal_is_cycle_safe(tmp_path):
 
 def test_dataclass_field_set_is_the_wire_contract():
     expected = {"happi", "kind", "id", "predecessor_idr", "depth", "fingerprint",
-                "ts", "decision", "inputs", "audit", "decision_anatomy"}
+                "ts", "decision", "inputs", "audit", "decision_anatomy", "output_hash"}
     assert set(PrecogIDR.__dataclass_fields__) == expected
+
+
+def test_output_hash_bound_and_tamper_detected():
+    from grasp.idr_forest import build_chain_forest, verify_chain_integrity
+    from grasp.verdict import Verdict
+    bound = build_idr(prompt="", fingerprint="f" * 16, decision={"action": "x"},
+                      predecessor_idr=None, depth=0, output_hash="sha256:" + "ab" * 32)
+    assert bound.output_hash == "sha256:" + "ab" * 32
+    assert verify_chain_integrity(
+        build_chain_forest([bound], genesis_anchor="ci:test")) is Verdict.VERIFIED
+    bound.output_hash = "sha256:" + "cd" * 32  # mutate the bound hash post-signing
+    assert verify_chain_integrity(
+        build_chain_forest([bound], genesis_anchor="ci:test")) is Verdict.BROKEN
+
+
+def test_output_hash_none_addresses_like_legacy():
+    plain = _idr({"action": "same"})
+    row = asdict(_idr({"action": "same"}))
+    legacy = {k: v for k, v in row.items() if k != "output_hash"}
+    assert content_addr(legacy) == content_addr(asdict(plain))
+
+
+def test_strict_mode_refuses_placeholder(monkeypatch, tmp_path):
+    import json
+    from grasp.idr import _sign_placeholder
+    from grasp.mcp_server import tool_verify
+    monkeypatch.setenv("GRASP_HOME", str(tmp_path))
+    idr = _idr({"n": 1})
+    row = asdict(idr)
+    body = {k: v for k, v in row.items() if k != "audit"}
+    if body.get("decision_anatomy") is None:
+        body.pop("decision_anatomy", None)
+    if body.get("output_hash") is None:
+        body.pop("output_hash", None)
+    row["audit"] = _sign_placeholder(body)
+    (tmp_path / "idr.jsonl").write_text(json.dumps(row, sort_keys=True) + "\n", encoding="utf-8")
+    out = tool_verify({"strict": True})
+    assert out["ok"] is False
+    assert out["degraded"] is True
+    assert out["scheme_counts"].get("sha256-placeholder") == 1
