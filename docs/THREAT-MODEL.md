@@ -127,6 +127,15 @@ Merkle root with an RFC 3161 / qualified TSA — roadmap item 7. The two are
 complementary: Bitcoin for decentralised verifiability, a TSA for statutory
 recognition.
 
+**SHIPPED (item 7, client).** ``grasp.rfc3161`` is a pure-stdlib RFC 3161
+client: TimeStampReq build, TimeStampResp / TSTInfo parse, imprint + digest +
+nonce checks, and RSA PKCS#1 v1.5 CMS signature verification (proven against a
+genuinely OpenSSL-signed fixture). Honest boundary, stated in the module:
+ECDSA signature verification and X.509 chain building need the ``cryptography``
+dependency, and eIDAS qualification itself is a property of the TSA — no
+client can assess it. A scheme it cannot check reports
+``unsupported_algorithm``, never a manufactured pass.
+
 ### A6 — Scheme confusion
 
 A record claiming a scheme this build cannot check is marked **DEGRADED**,
@@ -204,8 +213,10 @@ item 6), so an artifact's mark points at the decision chain behind it.
 5. **~~Output-hash binding~~ SHIPPED** — ``build_idr(output_hash=...)`` signs the
    delivered artifact's hash into the record.
 6. **C2PA bridge** — carry GRASP content addresses inside C2PA manifests.
-7. **RFC 3161 / eIDAS co-timestamping** — statutory-grade time alongside the
-   Bitcoin anchor.
+7. **RFC 3161 / eIDAS co-timestamping** — client SHIPPED (``grasp.rfc3161``,
+   pure stdlib: request build, response/TSTInfo parse, imprint+digest+nonce,
+   RSA signature verification; ECDSA + chain validation documented as the
+   dependency boundary). Statutory-grade time alongside the Bitcoin anchor.
 
 ## Reporting
 
