@@ -10,10 +10,13 @@ GRASP's claim has never been "unbreakable"; it is that every record is
 **tamper-evident, replayable, and externally checkable**, with the boundary of
 that guarantee written down. This page is that boundary.
 
-Terminology is deliberate throughout: records are **sealed** (MAC-chained with
-HMAC-SHA256 by default), not "signed" in the asymmetric, third-party-attributable
-sense — see adversary A3. We do not use the words *non-repudiable*, *tamper-proof*,
-or *guaranteed* anywhere, because under the default scheme they would be false.
+Terminology is deliberate throughout. The default scheme remains **sealed**
+(MAC-chained with HMAC-SHA256); first-class asymmetric signing — **Ed25519**,
+post-quantum **ML-DSA-65** (FIPS 204), and the dual **ed25519+ml-dsa-65** hybrid —
+is now shipped and selected via ``GRASP_SIGNING_SCHEME`` (see adversary A3). We
+still do not use the words *non-repudiable*, *tamper-proof*, or *guaranteed*
+anywhere, because each scheme's exact guarantee is what the table below states,
+no more.
 
 ## The adversaries considered
 
@@ -21,7 +24,7 @@ or *guaranteed* anywhere, because under the default scheme they would be false.
 |---|---|---|
 | A1 | An outsider editing records without the key | **Defeated** |
 | A2 | Truncating or rolling back the ledger | **Defeated once anchored** (residual below) |
-| A3 | The key holder rewriting their own history | **Bounded, not defeated** — the custody boundary |
+| A3 | The key holder rewriting their own history | **Bounded by key custody; asymmetric schemes enable the split** — see A3 |
 | A4 | Feeding the verifier a damaged ledger | **Defeated** |
 | A5 | Disputing *when* a record existed | **Bounded by the Bitcoin clock** |
 | A6 | Scheme confusion / downgrade | **Defeated** (monotone toward safe) |
@@ -52,15 +55,14 @@ still present: a truncated or rewritten-since-anchor ledger returns
 tamper axis and the continuity axis are reported separately, because "a byte
 was forged" and "history was shortened" are different accusations.
 
-**Residual, stated honestly:** receipts are local files. An attacker with
-enough filesystem access to delete ledger lines can delete the receipts too,
-returning the deployment to the "no receipts" state — which `verify` reports
-but does not fail, for backward compatibility with never-anchored ledgers.
-Mitigation today: receipts are small JSON files under
-`$GRASP_HOME/storage/ots/`; copy them off-host, commit them to a repository,
-or publish them. Roadmap items 3–4 (expected-root pinning, refuse-on-gap mode)
-close this residual by letting a deployment declare out-of-band that receipts
-**must** exist.
+**CLOSED (items 3–4).** The residual is closed by two shipped mechanisms:
+``grasp verify --expected-root <hex>`` (or ``GRASP_EXPECTED_ROOT`` /
+``expected-root.json``) pins the latest anchored root out-of-band — deleted
+receipts then read ``expected-root-missing`` and a rolled-back receipt set reads
+``expected-root-mismatch``, both hard failures; and ``--refuse-on-gap`` (or
+``GRASP_REFUSE_ON_GAP=1``) makes "no receipts" fail outright. A deployment that
+declares completeness out-of-band can no longer be silently returned to the
+weaker no-receipts state.
 
 ### A3 — The key holder (the custody boundary)
 
@@ -87,12 +89,18 @@ was never part of. The key holder can lie about *when within* the anchored
 window a record was made; they cannot move it *across* an anchor boundary.
 Frequent anchoring shrinks the window the lie can live in.
 
-Closing this properly is roadmap items 1–2: Ed25519 as the default scheme
-with a published verification key (so re-sealing requires a private key the
-verifying public no longer needs to trust the operator to withhold), and
-timestamps promoted into the anchored leaf. The verifier already treats
-asymmetric schemes as first-class: a scheme it cannot check reads DEGRADED,
-never VERIFIED.
+**SHIPPED (items 1–2).** Ed25519 and ML-DSA-65 (FIPS 204) — plus the dual
+``ed25519+ml-dsa-65`` hybrid — are first-class signing schemes: ``grasp keygen``
+generates the keypair, the audit block carries only the public-key fingerprint,
+and the verifier resolves the published verification key from ``GRASP_*_PUB`` /
+``GRASP_VERIFY_KEYS`` / ``<home>/keys/<scheme>.pub`` — so re-sealing requires a
+private key the verifying public no longer needs to trust the operator to
+withhold. The private seed is never in a record. Timestamps are promoted into
+the anchored leaf (leaf version 2: the stamped root commits to content address
++ recorded time), so a key-holder rewriting a timestamp moves the anchored leaf
+and continuity fails. The default scheme remains HMAC-SHA256 for
+byte-compatible deployments; a scheme the verifier cannot check still reads
+DEGRADED, never VERIFIED.
 
 ### A4 — A damaged or doctored ledger fed to the verifier
 
@@ -124,8 +132,10 @@ recognition.
 A record claiming a scheme this build cannot check is marked **DEGRADED**,
 never upgraded to VERIFIED — the verifier is monotone toward safe. The legacy
 `sha256-placeholder` scheme is retained for reading old records only and its
-docstring says what it is: not tamper-evident. Scheme identifiers are being
-tightened so that no placeholder can be mistaken for a sealing scheme.
+docstring says what it is: not tamper-evident. ``grasp verify --strict`` (or
+``GRASP_STRICT=1``) now refuses loudly on any unverifiable record and reports a
+per-scheme histogram naming exactly which records a migration must replace —
+the F4 gate for deployments leaving the placeholder scheme behind.
 
 ## What a GRASP record proves
 
@@ -154,8 +164,10 @@ more:
   the *supplied* source — not that the source is genuine, and not that the
   quote *supports* the claim (support-checking is a caller-side layer, and
   fail-open by design).
-- **Operator honesty under symmetric keys.** See A3. Say "sealed", not
-  "signed", until Ed25519 custody is deployed.
+- **Operator honesty under the deployed scheme.** Under HMAC-SHA256 the
+  record is "sealed" (see A3). Under Ed25519 / ML-DSA-65 with the verification
+  key published and the private seed held outside the operator's reach, the
+  record is "signed" in the third-party-attributable sense.
 - **That any given model output came from this ledger.** GRASP records
   decisions, beliefs, and claims *about* work; it does not yet bind the hash
   of an arbitrary output artifact into the chain. Roadmap item 5
@@ -182,16 +194,15 @@ item 6), so an artifact's mark points at the decision chain behind it.
 
 ## Hardening roadmap (in order)
 
-1. **Ed25519 default + published verification key** — split custody; move
-   from sealed to signed.
-2. **Timestamp in the anchored leaf** — make record time an anchored fact,
-   not operator-attested metadata.
-3. **Expected-root continuity** — pin the latest anchored root out-of-band so
-   deleted receipts cannot silence the continuity check.
-4. **Refuse-on-gap mode** — an opt-in policy where "no receipts" fails
-   verification instead of being reported.
-5. **Output-hash binding** — bind delivered artifacts by hash into the
-   decision chain.
+1. **~~Ed25519 default + published verification key~~ SHIPPED** — Ed25519,
+   ML-DSA-65 and the dual hybrid sign + verify; ``grasp keygen`` publishes keys.
+2. **~~Timestamp in the anchored leaf~~ SHIPPED** — leaf version 2 commits to
+   content address + recorded time; timestamp-rewrite attacks break continuity.
+3. **~~Expected-root continuity~~ SHIPPED** — ``--expected-root`` /
+   ``GRASP_EXPECTED_ROOT`` / ``expected-root.json`` pinning; deleted receipts fail.
+4. **~~Refuse-on-gap mode~~ SHIPPED** — ``--refuse-on-gap`` / ``GRASP_REFUSE_ON_GAP=1``.
+5. **~~Output-hash binding~~ SHIPPED** — ``build_idr(output_hash=...)`` signs the
+   delivered artifact's hash into the record.
 6. **C2PA bridge** — carry GRASP content addresses inside C2PA manifests.
 7. **RFC 3161 / eIDAS co-timestamping** — statutory-grade time alongside the
    Bitcoin anchor.
@@ -211,4 +222,6 @@ the GRIP engine and adjudicated by a cross-provider council (Gemini 3.1 Pro
 judging; Grok 4.5, Llama 3.3 70B and DeepSeek speakers, with a Kimi K3
 dissent adopted — it promoted the continuity fix from roadmap to
 pre-release). Findings verified against the code by hand before publication.
+Roadmap items 1–5 shipped 2026-08-17 by an overnight AFK session (V>> with
+DeepSeek V4 Pro assistance); items 6–7 in flight.
 Author: Lourens Cornelius "Laurie" Scheepers / CodeTonight.*

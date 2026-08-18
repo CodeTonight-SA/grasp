@@ -25,6 +25,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the six adversaries considered, what the arithmetic defeats vs merely
   bounds (the symmetric-key custody boundary, the Bitcoin clock vs eIDAS),
   and the ordered hardening roadmap. Linked from the README.
+- **Ed25519 + ML-DSA-65 signing** — first-class asymmetric schemes (Ed25519,
+  ML-DSA-65 FIPS 204, dual hybrid) over the canonical entry hash; `grasp keygen`
+  generates + publishes verification keys; the verifier resolves `GRASP_*_PUB` /
+  `GRASP_VERIFY_KEYS` / `<home>/keys/<scheme>.pub` and stays monotone DEGRADED.
+  Optional `cryptography>=44` via the `pqc` extra; the core stays zero-dep.
+- **Timestamp-aware anchored leaves (leaf v2)** — new anchors commit to content
+  address + recorded timestamp; a key-holder rewriting a timestamp moves the
+  leaf and continuity fails (roadmap item 2).
+- **Expected-root pinning + refuse-on-gap** — `--expected-root` /
+  `GRASP_EXPECTED_ROOT` and `--refuse-on-gap` / `GRASP_REFUSE_ON_GAP=1` close
+  the deleted-receipts residual (roadmap items 3-4).
+- **Output-hash binding** — `build_idr(output_hash=...)` signs a delivered
+  artifact's hash into the record (roadmap item 5).
+- **Strict scheme mode** — `grasp verify --strict` refuses unverifiable records
+  and reports a per-scheme histogram (F4).
 
 ## [0.2.0] - 2026-08-01
 

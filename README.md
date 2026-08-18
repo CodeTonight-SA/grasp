@@ -37,7 +37,7 @@ the tool that lets a skeptic check its work is not. Deeds, not words.
 
 | Module | What it does |
 |---|---|
-| `grasp.idr` | Signed Intent Decision Records (IDRs): flat-JSON envelopes, HMAC-SHA256 over a canonical body digest, predecessor hash-chaining, content addressing that excludes volatile metadata, JSONL persistence with POSIX locking. |
+| `grasp.idr` | Signed Intent Decision Records (IDRs): flat-JSON envelopes, HMAC-SHA256 / Ed25519 / ML-DSA-65 / dual-hybrid over a canonical body digest, predecessor hash-chaining, content addressing that excludes volatile metadata, optional output-hash binding, JSONL persistence with POSIX locking. |
 | `grasp.idr_forest` | The forest that organises IDRs into a provenance graph **rooted at exogenous anchors only** (CI runs, human commits, cross-provider verdicts, pre-registered hypotheses), with an RFC-6962 Merkle root, `O(log N)` inclusion proofs, tamper-detecting verification, and deterministic replay. |
 | `grasp.merkle` | The RFC-6962 (Certificate Transparency) Merkle primitive: domain-separated leaf/node hashing, inclusion proofs, verification. |
 | `grasp.context_chain` / `grasp.context_head` | The signed memory/belief chain: append-only `context-delta` records with an atomic HEAD pointer, two-axis verification (per-node signatures + content-addressed blob presence), and a signed cross-reference (`records_idr`) into the decision chain. |
@@ -77,10 +77,16 @@ guarantee; anything above it is recall.
 Records are hash-chained and Merkle-rooted; sealed **HMAC-SHA256 by default**
 over a locally held key (`GRASP_SIGNING_KEY` env var, or a key file created on
 first use under `~/.grasp/keys/` with 0600 permissions — the key never enters a
-record; only signatures and a short key fingerprint do). Asymmetric per-tenant
-signing (Ed25519, post-quantum schemes) is an integration path for deployments
-that provision key custody: this verifier deliberately marks schemes it cannot
-check as `DEGRADED` — monotone toward safe, never upgraded to `VERIFIED`.
+record; only signatures and a short key fingerprint do). Asymmetric signing is
+now first-class: **Ed25519**, post-quantum **ML-DSA-65** (FIPS 204), and the
+dual `ed25519+ml-dsa-65` hybrid, selected via `GRASP_SIGNING_SCHEME` — the
+default is `ed25519` when the optional `cryptography` package is installed
+(`pip install grasp-provenance[pqc]`), else HMAC-SHA256. `grasp keygen`
+generates keypairs and prints the public key + fingerprint for publication; the
+verifier resolves verification keys from `GRASP_*_PUB`, `GRASP_VERIFY_KEYS`, or
+`<home>/keys/<scheme>.pub`, and marks schemes it cannot check as `DEGRADED` —
+monotone toward safe, never upgraded to `VERIFIED`. The private seed never
+enters a record.
 
 ## What GRASP proves — and what it doesn't
 
