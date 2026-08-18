@@ -186,6 +186,7 @@ def _stub_chain(mcp_server, monkeypatch):
     monkeypatch.setattr(mcp_server, "_verify_decision_chain",
                         lambda chain, out: out.update(
                             decision_chain="verified", merkle_root="ab" * 32,
+                            merkle_root_ts="ab" * 32,
                             anchored=True) or (True, None))
     monkeypatch.setattr(mcp_server, "verify_context_chain", lambda: None)
 

@@ -544,6 +544,30 @@ def forest_merkle_root(forest: Forest) -> str:
     return merkle_root([a.encode("utf-8") for a in _forest_leaves(forest)])
 
 
+def _forest_leaves_ts(forest: Forest) -> list[str]:
+    """Timestamp-aware Merkle leaves (anchor leaf version 2).
+
+    Each leaf commits to BOTH a node's content address AND its recorded
+    timestamp: ``sha256(content_addr + "\n" + ts)``. A key-holder rewriting a
+    timestamp post-signing keeps the content address but MOVES the leaf — which
+    continuity then reports as missing (roadmap item 2: the record's time
+    becomes an anchored fact, not operator-attested metadata). Sorted ⇒
+    deterministic across runs, like :func:`_forest_leaves`.
+    """
+    return sorted(
+        "sha256:" + hashlib.sha256(
+            (content_addr(asdict(node.idr)) + "\n" + str(node.idr.ts)).encode("utf-8")
+        ).hexdigest()
+        for node in forest.nodes.values()
+    )
+
+
+def forest_merkle_root_ts(forest: Forest) -> str:
+    """RFC-6962 Merkle root over the timestamp-aware leaves (leaf version 2) —
+    the root NEW anchors stamp, so the Bitcoin witness commits to record times."""
+    return merkle_root([a.encode("utf-8") for a in _forest_leaves_ts(forest)])
+
+
 def forest_inclusion_proof(forest: Forest, node_id: str) -> dict:
     """Prove ONE node (by id) is committed by ``forest_merkle_root`` — without
     revealing the other nodes. Returns ``{node_id, content_addr, proof,

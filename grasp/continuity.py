@@ -42,7 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from grasp.idr_forest import _forest_leaves, forest_merkle_root
+from grasp.idr_forest import _forest_leaves, _forest_leaves_ts, forest_merkle_root_ts
 from grasp.merkle import merkle_root as _merkle_root
 
 RECEIPT_KIND = "grasp-continuity-receipt"
@@ -67,12 +67,17 @@ def receipt_path(merkle_root_hex: str, storage_root: Path) -> Path:
 
 
 def build_receipt(forest: Any, chain: list) -> dict:
-    """A pure snapshot of what this anchor commits to. No I/O."""
-    leaves = _forest_leaves(forest)
+    """A pure snapshot of what this anchor commits to. No I/O.
+
+    Leaf version 2: leaves are timestamp-aware (content address + recorded ts),
+    so the stamped root commits to record TIMES as well as record content —
+    roadmap item 2."""
+    leaves = _forest_leaves_ts(forest)
     return {
         "kind": RECEIPT_KIND,
+        "leaf_version": 2,
         "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "merkle_root": forest_merkle_root(forest),
+        "merkle_root": forest_merkle_root_ts(forest),
         "leaf_count": len(leaves),
         "leaves": leaves,
         "tip_id": chain[-1].id if chain else None,
@@ -156,6 +161,7 @@ def check_continuity(
     *,
     expected_root: str | None = None,
     refuse_on_gap: bool | None = None,
+    current_leaves_ts: set[str] | None = None,
 ) -> dict:
     """Is every anchored record still present, byte-for-byte, in the ledger?
 
@@ -212,9 +218,16 @@ def check_continuity(
         out["detail"] = ("the newest continuity receipt does not recompute to "
                          "its own merkle_root — the receipt was altered")
         return out
+    # Compare in the receipt's own leaf domain: version-2 receipts commit to
+    # timestamp-aware leaves, version-1 (legacy) to bare content addresses.
+    compare = (
+        current_leaves_ts
+        if newest.get("leaf_version") == 2 and current_leaves_ts is not None
+        else current_leaves
+    )
     anchored = set(newest["leaves"])
     out["anchored_leaf_count"] = len(anchored)
-    missing = sorted(anchored - current_leaves)
+    missing = sorted(anchored - compare)
     if missing:
         out["status"] = "broken"
         out["missing"] = len(missing)
