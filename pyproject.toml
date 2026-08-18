@@ -39,6 +39,10 @@ Homepage = "https://github.com/CodeTonight-SA/grasp"
 # HMAC-SHA256 core runs with zero dependencies; asymmetric schemes degrade
 # (DEGRADED) rather than crash when this is absent.
 pqc = ["cryptography>=44"]
+# C2PA manifest bridge (roadmap item 6): embed GRASP content addresses inside
+# C2PA manifests. Optional; the bridge degrades with a clear C2paUnavailable
+# when absent. Signing needs a real C2PA signer credential.
+c2pa = ["c2pa-python>=0.35"]
 
 [project.scripts]
 grasp = "grasp.cli:main"
