@@ -10,6 +10,12 @@ GRASP's claim has never been "unbreakable"; it is that every record is
 **tamper-evident, replayable, and externally checkable**, with the boundary of
 that guarantee written down. This page is that boundary.
 
+**Status 2026-08-18: all seven roadmap items shipped** — Ed25519 / ML-DSA-65
+signing, timestamp-aware anchored leaves, expected-root continuity +
+refuse-on-gap, output-hash binding, strict scheme mode, the C2PA bridge, and
+the RFC 3161 client. Each adversary section still names the residual
+boundaries that remain by design.
+
 Terminology is deliberate throughout. The default scheme remains **sealed**
 (MAC-chained with HMAC-SHA256); first-class asymmetric signing — **Ed25519**,
 post-quantum **ML-DSA-65** (FIPS 204), and the dual **ed25519+ml-dsa-65** hybrid —
@@ -198,8 +204,8 @@ that a detected mark "does not, on its own, confirm the full provenance of
 the content". GRASP answers the question marks leave open: *what was recorded
 as decided, believed, and claimed* — deterministically, out-of-band,
 checkable by anyone against Bitcoin without the vendor's cooperation. The two
-compose: a C2PA manifest can carry a GRASP record's content address (roadmap
-item 6), so an artifact's mark points at the decision chain behind it.
+compose: a C2PA manifest can carry a GRASP record's content address (shipped:
+grasp.c2pa), so an artifact's mark points at the decision chain behind it.
 
 ## Hardening roadmap (in order)
 
@@ -212,7 +218,9 @@ item 6), so an artifact's mark points at the decision chain behind it.
 4. **~~Refuse-on-gap mode~~ SHIPPED** — ``--refuse-on-gap`` / ``GRASP_REFUSE_ON_GAP=1``.
 5. **~~Output-hash binding~~ SHIPPED** — ``build_idr(output_hash=...)`` signs the
    delivered artifact's hash into the record.
-6. **C2PA bridge** — carry GRASP content addresses inside C2PA manifests.
+6. **~~C2PA bridge~~ SHIPPED** — grasp.c2pa embeds the grasp.idr.addr
+   assertion (content address, anchor root, timestamp) into real C2PA
+   manifests; optional c2pa-python extra; proven end-to-end against c2pa-rs.
 7. **RFC 3161 / eIDAS co-timestamping** — client SHIPPED (``grasp.rfc3161``,
    pure stdlib: request build, response/TSTInfo parse, imprint+digest+nonce,
    RSA signature verification; ECDSA + chain validation documented as the
