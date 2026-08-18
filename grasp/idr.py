@@ -85,6 +85,12 @@ class PrecogIDR:
     # a record without anatomy addresses identically to a pre-anatomy record
     # (see ``_CONTENT_ADDR_EXCLUDE`` / ``content_addr``).
     decision_anatomy: dict[str, Any] | None = None
+    # Output-hash binding (roadmap item 5) — sha256 of a delivered artifact,
+    # signed into the body so the record commits to what was PRODUCED, not just
+    # what was decided. OPTIONAL + back-compat: ``None`` keeps the envelope
+    # byte-identical to a pre-binding record and is dropped from the content
+    # address when absent (mirrors ``decision_anatomy``).
+    output_hash: str | None = None
 
 
 def _canonical_json(obj: dict) -> str:
@@ -147,6 +153,8 @@ def content_addr(envelope: dict) -> str:
     addressed = {k: v for k, v in envelope.items() if k not in _CONTENT_ADDR_EXCLUDE}
     if addressed.get("decision_anatomy") is None:
         addressed.pop("decision_anatomy", None)
+    if addressed.get("output_hash") is None:
+        addressed.pop("output_hash", None)
     return "sha256:" + hashlib.sha256(_canonical_json(addressed).encode()).hexdigest()
 
 
@@ -225,6 +233,7 @@ def build_idr(
     kind: str = "precog-decision",
     inputs: dict[str, Any] | None = None,
     decision_anatomy: Any = None,
+    output_hash: str | None = None,
 ) -> PrecogIDR:
     """Construct a PrecogIDR envelope with real HMAC-SHA256 signing.
 
@@ -256,6 +265,8 @@ def build_idr(
     # envelope (and therefore its signature) byte-identical to the legacy shape.
     if anatomy is not None:
         envelope["decision_anatomy"] = anatomy
+    if output_hash is not None:
+        envelope["output_hash"] = output_hash
     audit = _sign_real(envelope)
     return PrecogIDR(
         happi=HAPPI_VERSION,
@@ -269,6 +280,7 @@ def build_idr(
         inputs=inputs or {},
         audit=audit,
         decision_anatomy=anatomy,
+        output_hash=output_hash,
     )
 
 

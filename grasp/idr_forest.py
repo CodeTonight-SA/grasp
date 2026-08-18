@@ -368,6 +368,8 @@ def _verify_node(idr: PrecogIDR) -> Verdict:
     # anatomy WAS signed in and stays in the body (tamper-checked).
     if body.get("decision_anatomy") is None:
         body.pop("decision_anatomy", None)
+    if body.get("output_hash") is None:
+        body.pop("output_hash", None)
     if scheme == "sha256-placeholder":
         if _sign_placeholder(body).get("signature") != idr.audit.get("signature"):
             return Verdict.BROKEN

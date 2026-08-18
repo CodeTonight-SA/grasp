@@ -70,6 +70,11 @@ def _verify_failure_reason(out: dict) -> str:
             "anchor (ci:/human:/council:/hypo:). Not tampered, but not "
             "exogenously anchored — see 'unanchored'/'anchored'."
         )
+    if out.get("strict") and "degraded" in (out.get("decision_chain"), out.get("belief_chain")):
+        counts = out.get("scheme_counts") or {}
+        return ("VERIFY FAILED: STRICT — record(s) use a scheme this build "
+                "cannot fully check: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) +
+                ". Migrate them or drop --strict.")
     if "degraded" in (out.get("decision_chain"), out.get("belief_chain")):
         return "VERIFY DEGRADED: a record uses a scheme this build cannot fully check."
     return "VERIFY FAILED."
@@ -80,6 +85,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         "anchor": getattr(args, "anchor", False),
         "refuse_on_gap": getattr(args, "refuse_on_gap", False),
         "expected_root": getattr(args, "expected_root", None),
+        "strict": getattr(args, "strict", False),
     })
     _emit(out, as_json=args.json)
     if out.get("ok"):
@@ -217,6 +223,11 @@ def _add_ledger_commands(sub) -> None:
     )
     verify.add_argument("--json", action="store_true",
                         help="single-line JSON (default: pretty)")
+    verify.add_argument(
+        "--strict", action="store_true",
+        help="refuse loudly when any record uses a scheme this build cannot "
+             "fully check (legacy placeholder / unverifiable) — the F4 "
+             "migration gate")
     verify.add_argument(
         "--anchor", action="store_true",
         help="also confirm the Merkle root landed in a Bitcoin block, and say "

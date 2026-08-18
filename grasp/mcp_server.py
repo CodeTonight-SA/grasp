@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 from dataclasses import asdict
 from typing import Any
@@ -273,8 +274,28 @@ def tool_verify(_args: dict) -> dict:
     )
     out["continuity"] = continuity
     continuity_ok = continuity["status"] in ("ok", "no-receipts")
+    # FIFTH axis — strict mode (F4): refuse loudly when ANY record uses a scheme
+    # this build cannot fully check (legacy placeholder, unverifiable asymmetric).
+    # ``ok`` already excludes degraded chains; strict adds the explicit signal + a
+    # per-scheme histogram naming exactly which records a migration must replace.
+    strict = bool(_args.get("strict")) or os.environ.get("GRASP_STRICT", "").strip().lower() in ("1", "true", "yes", "on")
+    degraded = "degraded" in (out.get("decision_chain"), out.get("belief_chain"))
+    out["strict"] = strict
+    out["degraded"] = degraded
+    if degraded:
+        out["scheme_counts"] = _scheme_counts(chain)
     out["ok"] = tamper_free and anchored and not disproved and continuity_ok
     return out
+
+
+def _scheme_counts(chain: list) -> dict[str, int]:
+    """Per-record audit-scheme histogram — names WHICH records a strict
+    migration must still replace (F4: placeholder-downgrade ambiguity)."""
+    counts: dict[str, int] = {}
+    for idr in chain:
+        scheme = idr.audit.get("scheme") if isinstance(idr.audit, dict) else "missing"
+        counts[scheme] = counts.get(scheme, 0) + 1
+    return counts
 
 
 def tool_anchor(_args: dict) -> dict:
