@@ -136,7 +136,8 @@ def test_chain_traversal_is_cycle_safe(tmp_path):
 
 def test_dataclass_field_set_is_the_wire_contract():
     expected = {"happi", "kind", "id", "predecessor_idr", "depth", "fingerprint",
-                "ts", "decision", "inputs", "audit", "decision_anatomy", "output_hash"}
+                "ts", "decision", "inputs", "audit", "decision_anatomy",
+                "output_hash", "reasoning_trace"}
     assert set(PrecogIDR.__dataclass_fields__) == expected
 
 
@@ -160,6 +161,65 @@ def test_output_hash_none_addresses_like_legacy():
     assert content_addr(legacy) == content_addr(asdict(plain))
 
 
+def test_present_reasoning_trace_is_not_addressed():
+    """The exact INVERSE of test_present_anatomy_is_addressed, and the reason
+    reasoning_trace is excluded unconditionally rather than only when None.
+
+    A present decision_anatomy MOVES the content address; a present
+    reasoning_trace must NOT. Two decisions identical but for the thinking
+    recorded beside them are the same decision — an address that disagreed would
+    make the trace part of the decision's identity, which is the "trace as cause"
+    the HAPPI v1.5 design exists to fence against. Nothing else in this suite
+    guards it: switching the exclusion to the conditional pop that
+    decision_anatomy uses turns this red.
+    """
+    bare = build_idr(prompt="", fingerprint="f" * 16, decision={"action": "same"},
+                     predecessor_idr=None, depth=0)
+    traced = build_idr(prompt="", fingerprint="f" * 16, decision={"action": "same"},
+                       predecessor_idr=None, depth=0,
+                       reasoning_trace="weighed A against B, chose A")
+    assert traced.reasoning_trace == "weighed A against B, chose A"
+    assert content_addr(asdict(bare)) == content_addr(asdict(traced))
+
+
+def test_reasoning_trace_is_signed_and_tamper_evident():
+    """Excluded from the ADDRESS, included in the SIGNATURE.
+
+    Address-neutral must not mean unprotected. Rewriting a stored trace after
+    signing has to report BROKEN — a trace that could be edited after the fact
+    is precisely the record this design refuses to create. Modelled on
+    test_output_hash_bound_and_tamper_detected.
+    """
+    from grasp.idr_forest import build_chain_forest, verify_chain_integrity
+    from grasp.verdict import Verdict
+    traced = build_idr(prompt="", fingerprint="f" * 16, decision={"action": "x"},
+                       predecessor_idr=None, depth=0,
+                       reasoning_trace="the original thinking")
+    assert verify_chain_integrity(
+        build_chain_forest([traced], genesis_anchor="ci:test")) is Verdict.VERIFIED
+    traced.reasoning_trace = "a rewritten justification"
+    assert verify_chain_integrity(
+        build_chain_forest([traced], genesis_anchor="ci:test")) is Verdict.BROKEN
+
+
+def test_legacy_record_without_reasoning_trace_still_verifies():
+    """The reconstruction hazard, anchored — the one that must not be missed.
+
+    A record signed before this field existed has no "reasoning_trace" key in its
+    hash preimage, but asdict() re-materialises it as None on read. If the verify
+    path does not drop it, the preimage gains "reasoning_trace":null, the MAC
+    mismatches, and EVERY legacy record in the chain reports BROKEN —
+    indistinguishable from real tampering. Removing the None-drop in
+    idr_forest.verify_chain_integrity turns this red.
+    """
+    from grasp.idr_forest import build_chain_forest, verify_chain_integrity
+    from grasp.verdict import Verdict
+    plain = _idr({"action": "legacy"})
+    assert plain.reasoning_trace is None
+    assert verify_chain_integrity(
+        build_chain_forest([plain], genesis_anchor="ci:test")) is Verdict.VERIFIED
+
+
 def test_strict_mode_refuses_placeholder(monkeypatch, tmp_path):
     import json
     from grasp.idr import _sign_placeholder
@@ -172,6 +232,8 @@ def test_strict_mode_refuses_placeholder(monkeypatch, tmp_path):
         body.pop("decision_anatomy", None)
     if body.get("output_hash") is None:
         body.pop("output_hash", None)
+    if body.get("reasoning_trace") is None:
+        body.pop("reasoning_trace", None)
     row["audit"] = _sign_placeholder(body)
     (tmp_path / "idr.jsonl").write_text(json.dumps(row, sort_keys=True) + "\n", encoding="utf-8")
     out = tool_verify({"strict": True})

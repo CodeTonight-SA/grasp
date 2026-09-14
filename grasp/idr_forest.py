@@ -370,6 +370,15 @@ def _verify_node(idr: PrecogIDR) -> Verdict:
         body.pop("decision_anatomy", None)
     if body.get("output_hash") is None:
         body.pop("output_hash", None)
+    # Same reconstruction hazard, and it is the one that must not be missed:
+    # ``compute_entry_hash`` serialises the body to JSON, so a key present with a
+    # ``None`` value sits in the hash preimage as ``"reasoning_trace":null``. At
+    # sign time the key is omitted entirely when ``None``; ``asdict`` here
+    # re-materialises it. Different preimage, different hash, MAC mismatch, and
+    # every legacy record in the chain reports BROKEN — indistinguishable from
+    # real tampering.
+    if body.get("reasoning_trace") is None:
+        body.pop("reasoning_trace", None)
     if scheme == "sha256-placeholder":
         if _sign_placeholder(body).get("signature") != idr.audit.get("signature"):
             return Verdict.BROKEN
