@@ -33,7 +33,7 @@ from typing import Any
 from grasp.home import grasp_home
 from grasp.keys import signing_key
 
-HAPPI_VERSION = "1.3"
+HAPPI_VERSION = "1.5"
 
 
 def _default_idr_path() -> Path:
@@ -91,6 +91,15 @@ class PrecogIDR:
     # byte-identical to a pre-binding record and is dropped from the content
     # address when absent (mirrors ``decision_anatomy``).
     output_hash: str | None = None
+    # Reasoning trace (HAPPI v1.5) — the thinking recorded alongside the
+    # decision. SIGNED ALWAYS, ADDRESSED NEVER: it is excluded from the content
+    # address UNCONDITIONALLY (see ``_CONTENT_ADDR_EXCLUDE``), unlike the two
+    # fields above which are dropped only when ``None``. A trace is a diagnostic
+    # specimen, not part of what the decision IS — two decisions identical but
+    # for their reasoning must share one address, or the trace becomes
+    # identity-bearing and the chain says a decision was a different decision
+    # because it was thought about differently.
+    reasoning_trace: str | None = None
 
 
 def _canonical_json(obj: dict) -> str:
@@ -126,7 +135,17 @@ def compute_entry_hash(entry: dict) -> str:
 # are wall-clock + random (build_idr), `audit` is the signature derived from
 # them. The content coordinate is the SEMANTIC body (kind, predecessor_idr,
 # depth, fingerprint, decision, inputs, happi).
-_CONTENT_ADDR_EXCLUDE = ("id", "ts", "audit")
+#
+# ``reasoning_trace`` is excluded UNCONDITIONALLY, which is deliberately NOT the
+# pattern ``decision_anatomy`` and ``output_hash`` follow below — those are
+# dropped only when ``None``, so a PRESENT value moves the address
+# (``test_present_anatomy_is_addressed`` pins exactly that). Copying that here
+# would make two otherwise-identical decisions get different addresses because
+# they were reasoned about differently, which is the "trace as cause" the HAPPI
+# v1.5 design fences against. Signed always, addressed never: tamper-evident,
+# address-neutral, and strictly more back-compatible, since every already-chained
+# address and Merkle root is unchanged.
+_CONTENT_ADDR_EXCLUDE = ("id", "ts", "audit", "reasoning_trace")
 
 
 def content_addr(envelope: dict) -> str:
@@ -234,6 +253,7 @@ def build_idr(
     inputs: dict[str, Any] | None = None,
     decision_anatomy: Any = None,
     output_hash: str | None = None,
+    reasoning_trace: str | None = None,
 ) -> PrecogIDR:
     """Construct a PrecogIDR envelope with real HMAC-SHA256 signing.
 
@@ -267,6 +287,10 @@ def build_idr(
         envelope["decision_anatomy"] = anatomy
     if output_hash is not None:
         envelope["output_hash"] = output_hash
+    # Into the SIGNED body, but never into the content address — so a trace is
+    # tamper-evident without being identity-bearing.
+    if reasoning_trace is not None:
+        envelope["reasoning_trace"] = reasoning_trace
     audit = _sign_real(envelope)
     return PrecogIDR(
         happi=HAPPI_VERSION,
@@ -281,6 +305,7 @@ def build_idr(
         audit=audit,
         decision_anatomy=anatomy,
         output_hash=output_hash,
+        reasoning_trace=reasoning_trace,
     )
 
 
