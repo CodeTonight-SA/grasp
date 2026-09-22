@@ -2,12 +2,12 @@
 
 [TMIF](https://datatracker.ietf.org/doc/draft-laurie-tmif/) —
 *A Standard for Claiming Transparency and Falsifiability*
-(`draft-laurie-tmif-01`, Laurie et al., IETF Informational Internet-Draft,
-June 2026) — is a JSON interchange format in which a system declares, per
-threat, a mitigation and a transparency level (1 = binary available … 5 =
-formal proof), signs the declaration, and points evaluators at artifacts
-they can verify. TMIF produces no provenance records itself; it is a
-**declaration layer**.
+(`draft-laurie-tmif-02`, Laurie et al., IETF Informational Internet-Draft,
+September 2026, expires 20 March 2027) — is a JSON interchange format in
+which a system declares, per threat, a mitigation and a transparency level
+(1 = binary available … 5 = formal proof), signs the declaration, and points
+evaluators at artifacts they can verify. TMIF produces no provenance records
+itself; it is a **declaration layer**.
 
 ## Engine, not format
 
@@ -23,19 +23,25 @@ transparency level. Under GRASP's exogenous-anchor rule a level is only
 worth what a third party can re-derive — the record survives independent
 refutation or it does not. GRASP therefore **under-claims by policy**:
 `transparency_level_lower_bound: 3` (source available, weakest-link
-honest), rising to level 4 only where verification is a deterministic
-re-derivation any party can reproduce offline (the Merkle/replay legs and
-the Bitcoin-anchored production chain).
+honest), rising to level 4 only where the verification is a deterministic
+re-derivation any party can reproduce offline from published inputs — the
+replay leg, and the Bitcoin-anchored production chain whose replay bundle
+is in [`tmif/anchor/`](tmif/anchor/README.md).
 
 ## Files
 
 | File | What it is |
 |---|---|
-| [`tmif/grasp-tmif-claimant.json`](tmif/grasp-tmif-claimant.json) | The TMIF document (schema per `draft-laurie-tmif-01` §4.1) |
-| [`tmif/grasp-tmif-claimant.jws`](tmif/grasp-tmif-claimant.jws) | The same bytes, signed — RFC 7515 compact JWS, alg `EdDSA` (Ed25519, RFC 8037) |
+| [`tmif/grasp-tmif-claimant.json`](tmif/grasp-tmif-claimant.json) | The TMIF document (schema per `draft-laurie-tmif-02` §4.1; carries `issued_at` and `valid_until`) |
+| [`tmif/grasp-tmif-claimant.jws`](tmif/grasp-tmif-claimant.jws) | The same bytes, signed — RFC 7515 compact JWS, alg `EdDSA` (Ed25519, RFC 8037), the form `draft-laurie-tmif-02` §5.1.1 requires |
 | [`tmif/claimant-public-key.jwk.json`](tmif/claimant-public-key.jwk.json) | The verifying key (JWK), `kid: grasp-tmif-claimant-2026` |
+| [`tmif/anchor/`](tmif/anchor/README.md) | The replay bundle behind the level-4 anchor claim: manifest, upgraded OpenTimestamps proof (Bitcoin blocks 956991 and 956992), the 501 leaf hashes, and a standard-library `verify.py` |
 
-## Verify the signature (without trusting us)
+The document was re-issued on 2026-09-22 against `draft-laurie-tmif-02`. It
+supersedes the July 2026 issue; that earlier `.jws` still verifies against its
+own payload, so treat any copy of it as superseded, not as forged.
+
+## Verify the signature and the payload (no trust in us needed for that step)
 
 Requires only Python and the `cryptography` package
 (`pip install cryptography`). Run from the repo root:
@@ -59,11 +65,20 @@ print("signature OK:", payload["system_identifier"])
 ```
 
 A forged or altered document fails the `verify` call; a `.jws` whose
-payload drifts from the published `.json` fails the assert. The claims
-inside point at artifacts you can check the same way — the public
+payload drifts from the published `.json` fails the assert. What this step
+does **not** establish is whose key that is: the JWK is published beside the
+JWS in this repository, and nothing outside the repository binds it to
+CodeTonight yet. An Evaluator who needs the key's identity, not just its
+consistency, should treat this repository as the (only) root of trust for
+`kid: grasp-tmif-claimant-2026` until an out-of-band binding is published.
+
+The claims inside point at artifacts you can check the same way — the public
 verifier at [grasp-web-chi.vercel.app/try](https://grasp-web-chi.vercel.app/try),
 this source tree, and the production decision chain whose Merkle root is
-confirmed in Bitcoin block 956992 (verify with the upstream
+attested in Bitcoin blocks 956991 and 956992: [`tmif/anchor/`](tmif/anchor/README.md)
+holds the manifest, the OpenTimestamps proof and the 501 leaf hashes, and
+`python3 docs/tmif/anchor/verify.py` re-derives the root and prints the block
+merkle roots to compare on any explorer (verify the proof with the upstream
 OpenTimestamps client, not our code).
 
 ## Falsifier
@@ -72,6 +87,6 @@ This positioning is wrong — and this document gets re-examined — if TMIF
 (or a successor) begins producing tamper-evident agent-runtime records
 itself: that would make it a competing engine, not a declaration format.
 The claimant document expires `2026-12-31`; the underlying draft expires
-5 December 2026. Stale declarations are worse than none — if you are
+20 March 2027. Stale declarations are worse than none — if you are
 reading this after expiry and no refreshed `.jws` exists, treat the
 declaration (not the engine) as lapsed.

@@ -1,0 +1,10 @@
+{
+  "artifact": "grip-public-decision-chain",
+  "canonical_merkle_root_rfc6962": "0bba0792bf9f71caa815d0c42daf27f45baf07ef9749523be666f103a7f1bcb4",
+  "chain_head_sha": "044d27897243fb4f34eb994bf4e3730a5a421d51",
+  "fold_seal_leaf_index": 494,
+  "generated_at": "2026-07-06T19:45:15+0200",
+  "leaf_definition": "each exact JSONL line of data/idr-public.jsonl, in order",
+  "rows": 501,
+  "verify": "recompute merkle_root(lines) via lib.merkle; must equal the root; then ots verify this file's .ots"
+}
