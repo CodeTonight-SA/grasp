@@ -1,7 +1,7 @@
 {
   "system_identifier": "urn:codetonight:system:grasp-cryptographic-causation",
   "system_version": "1.0.0",
-  "issued_at": "2026-09-22T01:43:48Z",
+  "issued_at": "2026-09-22T01:52:05Z",
   "valid_until": "2026-12-31T23:59:59Z",
   "transparency_level_lower_bound": 3,
   "components": [
