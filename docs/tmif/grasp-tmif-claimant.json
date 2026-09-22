@@ -1,7 +1,7 @@
 {
   "system_identifier": "urn:codetonight:system:grasp-cryptographic-causation",
   "system_version": "1.0.0",
-  "issued_at": "2026-09-22T01:52:57Z",
+  "issued_at": "2026-09-22T01:53:54Z",
   "valid_until": "2026-12-31T23:59:59Z",
   "transparency_level_lower_bound": 3,
   "components": [
@@ -11,7 +11,7 @@
       "claims": [
         {
           "threat_identifier": "urn:codetonight:threat:tampering:post-hoc-record-alteration",
-          "mitigation_description": "Every consequential agent decision emits a signed Intent Decision Record (IDR) into an append-only chain: a per-record signature over the entry hash (HMAC-SHA256 in the hermetic standard-library core; Ed25519, ML-DSA-65 or both as asymmetric backends), predecessor linkage inside the signed body, and an RFC-6962 Merkle root over the records in chain order. Any byte alteration is detectable by recomputation. Source is public; the verification is arithmetic, not attestation.",
+          "mitigation_description": "Every consequential agent decision emits a signed Intent Decision Record (IDR) into an append-only chain: a per-record signature over the entry hash (HMAC-SHA256 in the hermetic standard-library core; Ed25519, ML-DSA-65 or both as asymmetric backends), predecessor linkage inside the signed body, and an RFC-6962 Merkle root over the records in chain order. Any byte alteration is detectable by recomputation. The engine's source code is public; the records themselves are not, and the verification is arithmetic, not attestation.",
           "transparency_level": 3,
           "artifacts": [
             "https://github.com/codetonight-sa/grasp",

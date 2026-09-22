@@ -24,9 +24,12 @@ worth what a third party can re-derive — the record survives independent
 refutation or it does not. GRASP therefore **under-claims by policy**:
 `transparency_level_lower_bound: 3` (source available, weakest-link
 honest), rising to level 4 only where the verification is a deterministic
-re-derivation any party can reproduce offline from published inputs — the
-replay leg, and the Bitcoin-anchored production chain whose replay bundle
-is in [`tmif/anchor/`](tmif/anchor/README.md).
+re-derivation any party can reproduce: the replay leg, and the
+Bitcoin-anchored production chain, whose bundle in
+[`tmif/anchor/`](tmif/anchor/README.md) lets anyone rebuild the root
+locally from published inputs and then confirm the attested blocks against
+an independent view of the Bitcoin chain (an explorer or a node) — that last
+step is deliberately not something our code can vouch for.
 
 ## Files
 
@@ -68,18 +71,24 @@ A forged or altered document fails the `verify` call; a `.jws` whose
 payload drifts from the published `.json` fails the assert. What this step
 does **not** establish is whose key that is: the JWK is published beside the
 JWS in this repository, and nothing outside the repository binds it to
-CodeTonight yet. An Evaluator who needs the key's identity, not just its
-consistency, should treat this repository as the (only) root of trust for
-`kid: grasp-tmif-claimant-2026` until an out-of-band binding is published.
+CodeTonight yet. An Evaluator who needs the key's
+identity, not just its consistency, should treat control of this repository
+as the only root of trust for `kid: grasp-tmif-claimant-2026` until an
+out-of-band binding is published. To make such a binding checkable when it
+appears, the key's RFC 7638 JWK thumbprint is `JCFPsokLQlGwrvkymyA4X8ZGzRTngLqqBV9y-opAD0w`;
+any statement from CodeTonight on another channel that names that thumbprint
+binds the key to the organisation, and this repository alone does not.
 
 The claims inside point at artifacts you can check the same way — the public
 verifier at [grasp-web-chi.vercel.app/try](https://grasp-web-chi.vercel.app/try),
 this source tree, and the production decision chain whose Merkle root is
 attested in Bitcoin blocks 956991 and 956992: [`tmif/anchor/`](tmif/anchor/README.md)
 holds the manifest, the OpenTimestamps proof and the 501 leaf hashes, and
-`python3 docs/tmif/anchor/verify.py` re-derives the root and prints the block
-merkle roots to compare on any explorer (verify the proof with the upstream
-OpenTimestamps client, not our code).
+`python3 docs/tmif/anchor/verify.py --explorer` re-derives the root, has the
+upstream OpenTimestamps client parse the proof, and confirms the attested
+blocks' merkle roots against blockstream.info; without `--explorer` it stops
+short and reports INCOMPLETE, because the Bitcoin step is yours to run against
+a view of the chain you trust.
 
 ## Falsifier
 
