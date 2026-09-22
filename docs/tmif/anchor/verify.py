@@ -106,21 +106,26 @@ def check_chain(blocks: dict[int, str], use_explorer: bool) -> str:
             print(f"          https://blockstream.info/block-height/{h}   expected merkleroot {blocks[h]}")
         print("          (or re-run with --explorer to fetch the block headers from blockstream.info)")
         return "SKIPPED"
-    all_ok = True
+    # Every block is checked; a fetch failure never hides an earlier block's
+    # FAIL. Aggregate: any FAIL -> FAIL; else any fetch failure -> SKIPPED; else PASS.
+    any_fail = any_skipped = False
     for h in sorted(blocks):
         try:
             with urllib.request.urlopen(f"{EXPLORER}/block-height/{h}", timeout=20) as r:
                 block_hash = r.read().decode().strip()
             with urllib.request.urlopen(f"{EXPLORER}/block/{block_hash}", timeout=20) as r:
                 header = json.loads(r.read())
-            ok = header.get("merkle_root") == blocks[h]
-        except Exception as exc:  # network failure is an incomplete check, not a pass
-            print(f"[3 CHAIN] block {h}: explorer fetch failed ({type(exc).__name__}: {exc})")
-            return "SKIPPED"
-        all_ok &= ok
+        except Exception as exc:  # a network failure is an incomplete check, not a pass
+            print(f"[3 CHAIN] block {h}: explorer fetch failed ({type(exc).__name__}: {exc}) -> SKIPPED")
+            any_skipped = True
+            continue
+        ok = header.get("merkle_root") == blocks[h]
+        any_fail |= not ok
         print(f"[3 CHAIN] block {h}: explorer merkle_root {header.get('merkle_root')} "
               f"timestamp {header.get('timestamp')} -> {'PASS' if ok else 'FAIL'}")
-    return "PASS" if all_ok else "FAIL"
+    if any_fail:
+        return "FAIL"
+    return "SKIPPED" if any_skipped else "PASS"
 
 
 def main(argv: list[str]) -> int:
