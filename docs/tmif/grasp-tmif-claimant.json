@@ -1,6 +1,7 @@
 {
   "system_identifier": "urn:codetonight:system:grasp-cryptographic-causation",
   "system_version": "1.0.0",
+  "issued_at": "2026-09-22T01:53:54Z",
   "valid_until": "2026-12-31T23:59:59Z",
   "transparency_level_lower_bound": 3,
   "components": [
@@ -10,7 +11,7 @@
       "claims": [
         {
           "threat_identifier": "urn:codetonight:threat:tampering:post-hoc-record-alteration",
-          "mitigation_description": "Every consequential agent decision emits a signed Intent Decision Record (IDR) into an append-only forest: HMAC-SHA256 (or ed25519+ML-DSA-65) per-record signatures, predecessor linkage inside the signed body, RFC-6962 Merkle root over sorted content addresses. Any byte alteration is detectable by recomputation. Source is public; the verification is arithmetic, not attestation.",
+          "mitigation_description": "Every consequential agent decision emits a signed Intent Decision Record (IDR) into an append-only chain: a per-record signature over the entry hash (HMAC-SHA256 in the hermetic standard-library core; Ed25519, ML-DSA-65 or both as asymmetric backends), predecessor linkage inside the signed body, and an RFC-6962 Merkle root over the records in chain order. Any byte alteration is detectable by recomputation. The engine's source code is public; the records themselves are not, and the verification is arithmetic, not attestation.",
           "transparency_level": 3,
           "artifacts": [
             "https://github.com/codetonight-sa/grasp",
@@ -19,16 +20,18 @@
         },
         {
           "threat_identifier": "urn:codetonight:threat:repudiation:storage-custodian-rewrite",
-          "mitigation_description": "The forest Merkle root is committed to Bitcoin via OpenTimestamps, so even the record custodian cannot rewrite history undetectably. The production decision-chain root (content address 0bba0792..., 501 decisions) is confirmed in Bitcoin block 956992; any party can check the OTS proof against a public block explorer with no trust in the authors.",
+          "mitigation_description": "The chain's Merkle root is committed to Bitcoin via OpenTimestamps, so even the record custodian cannot rewrite history undetectably. The production decision-chain root 0bba0792bf9f71caa815d0c42daf27f45baf07ef9749523be666f103a7f1bcb4 (501 records) is attested in Bitcoin blocks 956991 and 956992. The anchor manifest, the upgraded OpenTimestamps proof and the 501 RFC-6962 leaf hashes are published, so any party can re-derive the root from the leaf hashes and check the proof against a public block explorer with no trust in the authors.",
           "transparency_level": 4,
           "artifacts": [
-            "https://grip-web.com/decision-chain",
+            "https://github.com/CodeTonight-SA/grasp/tree/main/docs/tmif/anchor",
+            "https://raw.githubusercontent.com/CodeTonight-SA/grasp/main/docs/tmif/anchor/decision-chain-501-2026-07-06.json.ots",
+            "https://blockstream.info/block-height/956992",
             "urn:bitcoin:block:956992"
           ]
         },
         {
           "threat_identifier": "urn:ada:threat:spoofing:fabricated-citation",
-          "mitigation_description": "Every outward claim carries a receipt binding it to a verbatim quotation at recorded byte offsets in a content-addressed source; a fabricated quotation can only record as not_found and marks the deliverable un-filed-safe. An advisory model layer may only tighten, never relax, the deterministic verdict.",
+          "mitigation_description": "Every outward claim carries a receipt binding it to a verbatim quotation at recorded byte offsets in a content-addressed source. Citation verification is deterministic and model-free: a quotation that is not verbatim in its source (exact, then whitespace- and typography-flexible matching) records as not_found, and in strict mode any not_found raises and stops the deliverable. Two independent verifiers disagreeing on a citation's status or offsets for the same inputs would falsify this claim.",
           "transparency_level": 3,
           "artifacts": [
             "https://github.com/codetonight-sa/grasp",
