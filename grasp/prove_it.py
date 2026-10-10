@@ -315,6 +315,16 @@ def _esc(s: str) -> str:
     return html.escape(s, quote=True)
 
 
+#: <, > and & written as JSON escapes, so no string in the provenance (a source
+#: label, a support attestation) can close the <script> element it sits in and
+#: become markup. The JSON still parses to exactly the same values.
+_SCRIPT_SAFE = str.maketrans({"<": "\\u003c", ">": "\\u003e", "&": "\\u0026"})
+
+
+def _json_for_script(value) -> str:
+    return json.dumps(value).translate(_SCRIPT_SAFE)
+
+
 _HEADING_RE = re.compile(r"^(#{1,4})\s+(.*)$")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _CITE_RE = re.compile(r"\[\[cite:([^\]]+)\]\]")
@@ -584,7 +594,7 @@ def build_html(title: str, response_md: str, citations: list[Citation],
         f"<a class='cite ok' style='vertical-align:baseline'>[n✓]</a> exact "
         f"<a class='cite fuzzy' style='vertical-align:baseline'>[n≈]</a> whitespace-variant "
         f"<a class='cite bad' style='vertical-align:baseline'>[n✗]</a> NOT in source (possible fabrication)"
-        f"<script type='application/json' id='provenance'>{json.dumps(prov)}</script></footer>"
+        f"<script type='application/json' id='provenance'>{_json_for_script(prov)}</script></footer>"
         f"<script>{_JS}</script></body></html>"
     )
 
