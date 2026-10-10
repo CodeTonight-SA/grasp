@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Signed support attestations: a caller's machine reading, sealed with the
+  receipt.** A citation can carry a `SupportAttestation` (`Citation.support_attestation`):
+  the provider, the versioned model, the SHA-256 of the exact question, the
+  verdict (`supports`, `contradicts` or `says_nothing`), the probabilities,
+  whether they are calibrated, and a reference to their measured precision.
+  GRASP validates it, seals it into the receipt's signed decision record
+  (`decision.support_attestations_sha256`), re-checks it offline with
+  `grasp.legal_receipt.verify_receipt`, and draws it in the artifact as a
+  machine reading with an amber "review" flag when the reading is unsure. The
+  quote check stays sovereign: a red citation stays red, and "never file a red"
+  is unchanged. A receipt without readings is written and sealed exactly as
+  before. GRASP still never calls a model.
 - **Continuity receipts — VERIFIED now means complete-or-fail** (#13). `grasp
   anchor` (CLI and MCP `grasp_anchor`) stamps the current Merkle root via
   OpenTimestamps **and** writes a receipt of the exact leaf set that root

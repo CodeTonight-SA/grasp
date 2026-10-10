@@ -21,6 +21,11 @@ re-verify the signed chains. "Never file a red" is mechanical here:
 not_found, or when there are no citations at all (an unchecked deliverable is
 not a checked one).
 
+A citation may carry a caller's support attestation (a machine reading of
+whether its quote supports the claim). It is sealed into the signed decision
+record with the rest of the receipt, and :func:`verify_receipt` re-checks it
+offline. It never changes ``filed_safe``: a red stays red whatever it says.
+
 CLI:
     grasp-legal-receipt spec.json \
         [--deliverable FILE] [--matter REF] [--jurisdiction J] \
@@ -35,9 +40,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from grasp.prove_it import STATUS_FUZZY, STATUS_NOT_FOUND, STATUS_VERIFIED, render
-from grasp.provenance import record_proveit_provenance
+from grasp.provenance import record_proveit_provenance, verify_proveit_provenance
 
-__all__ = ["RECEIPT_KIND", "RECEIPT_VERSION", "build_legal_receipt", "receipt_summary", "main"]
+__all__ = ["RECEIPT_KIND", "RECEIPT_VERSION", "build_legal_receipt", "receipt_summary",
+           "verify_receipt", "main"]
 
 RECEIPT_VERSION = 1
 RECEIPT_KIND = "grasp-legal-receipt"
@@ -48,6 +54,20 @@ _VERIFY_HOWTO = [
     "Any citation with status not_found is a quote its cited source does not contain — the deliverable must not be filed on it.",
     "chain.idr_addr / chain.memory_head are the signed decision + belief records; verify them against the IDR forest and memory chain.",
 ]
+_ATTESTATION_HOWTO = (
+    "Each support_attestation is a caller's machine reading of whether a quote supports "
+    "its claim. The readings are sealed into the signed decision record at chain.idr_addr "
+    "(decision.support_attestations_sha256), so editing any of them breaks verification. "
+    "A reading never changes a citation's status, and never makes a red citation safe to file."
+)
+
+
+def _verify_howto(prov: dict) -> list[str]:
+    """The skeptic's steps. One more step appears only when the receipt carries
+    machine readings, so a receipt without any is unchanged."""
+    if any("support_attestation" in c for c in prov.get("citations", [])):
+        return [*_VERIFY_HOWTO, _ATTESTATION_HOWTO]
+    return _VERIFY_HOWTO
 
 
 def _sha256_file(path: Path) -> str:
@@ -121,7 +141,7 @@ def build_legal_receipt(
         },
         "filed_safe": filed_safe,
         "filed_safe_reason": reason,
-        "verify_howto": _VERIFY_HOWTO,
+        "verify_howto": _verify_howto(prov),
     }
     return receipt, html
 
@@ -152,6 +172,49 @@ def receipt_summary(receipt: dict) -> str:
         lines.append(f"Signed chain: not recorded ({chain.get('reason', 'unknown')})")
     lines.append(f"Verdict: {verdict} — {receipt.get('filed_safe_reason', '')}")
     return "\n".join(lines)
+
+
+def _tally_problems(receipt: dict) -> list[str]:
+    """The tally must count the citations' own statuses, so that no status can be
+    changed quietly. The tally itself is covered by the signed record."""
+    counted = {STATUS_VERIFIED: 0, STATUS_FUZZY: 0, STATUS_NOT_FOUND: 0}
+    for c in receipt.get("citations", []):
+        status = c.get("status")
+        counted[status] = counted.get(status, 0) + 1
+    if counted != receipt.get("tally"):
+        return [f"the tally {receipt.get('tally')} does not count the citations' "
+                f"statuses, which give {counted}"]
+    return []
+
+
+def verify_receipt(receipt: dict, *, idr_path: Path | None = None) -> dict:
+    """Re-check a receipt against the signed decision record it names, offline.
+
+    Returns ``{"ok": bool, "problems": [...]}``. It checks that the receipt was
+    sealed; that its title, grounding rate, tally and every support attestation
+    match what the signed record commits to, and that the record's signature
+    holds; that the tally counts the citations' statuses; and that ``filed_safe``
+    follows from them (never file a red). ``ok`` means the record is intact, so
+    a receipt that honestly says DO NOT FILE still verifies. It reads the local
+    decision ledger (``idr_path``, by default ``<GRASP_HOME>/idr.jsonl``) and
+    the signing key, and nothing else: no network and no model.
+    """
+    chain = receipt.get("chain") or {}
+    if chain.get("recorded") and chain.get("idr_addr"):
+        # The receipt carries everything the seal committed to (its title,
+        # grounding rate, tally and citations), so it stands in for both the
+        # spec and the provenance record.
+        problems = verify_proveit_provenance(receipt, receipt, chain["idr_addr"],
+                                             idr_path=idr_path)
+    else:
+        problems = ["this receipt was never sealed (chain.recorded is false), "
+                    "so nothing in it is signed"]
+    problems += _tally_problems(receipt)
+    safe, _reason = _filed_safety(receipt)
+    if receipt.get("filed_safe") is not safe:
+        problems.append(f"filed_safe says {receipt.get('filed_safe')!r}, but its citations "
+                        f"say {safe!r}. Never file a red")
+    return {"ok": not problems, "problems": problems}
 
 
 def main(argv: list[str] | None = None) -> int:
