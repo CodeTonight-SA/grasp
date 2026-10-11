@@ -82,6 +82,38 @@ shape, seals it into the receipt's signed decision record
 machine reading. A reading can flag a citation for review. It can never turn a
 red citation green, and it never changes the filing verdict.
 
+### Bring your own key
+
+GRASP never calls a model (`grasp/honesty.py`), so it cannot produce a support
+attestation by itself. `examples/byok_attest.py` is a small, standalone,
+stdlib-only script that does: it reads a prove-it spec, runs GRASP's
+deterministic floor first, and for every citation the floor actually located
+(verified, or a whitespace/typographic variant — never a fabricated one) asks
+TypeSafe's Jev model whether the quote, read inside its source paragraph,
+supports the claim.
+
+"Bring your own key" means exactly that: the script reads `TYPESAFE_API_KEY`
+from **your own environment** and talks to TypeSafe directly. Your claim text
+and your source text go to **your own TypeSafe account**, under your own
+billing, and nowhere near CodeTonight — no GRIP runtime, no HAL gateway, no
+CodeTonight server in the path at all. It lives outside the `grasp` package on
+purpose, so "grasp never imports a provider SDK" keeps holding for the
+library: only this example reaches a network, and a test pins that nothing
+under `grasp/` ever imports it back.
+
+```bash
+TYPESAFE_API_KEY=... python3 examples/byok_attest.py --input spec.json --out attested.json
+```
+
+**What a resulting attestation is, and is not.** It is one model's machine
+reading of one quote against one claim — the model's own probabilities, the
+exact hash of the question it was asked, and almost always `precision_ref:
+"unmeasured"`, because nobody has yet measured how often this question's
+answer is right on a labelled set. It is not proof, it is not calibrated by
+default, and it can only add an amber "review" flag next to a citation that
+the deterministic floor already found — it can never turn a fabricated quote
+into a verified one, and it never changes whether a receipt is safe to file.
+
 ## Signing, honestly stated
 
 Records are hash-chained and Merkle-rooted; sealed **HMAC-SHA256 by default**
