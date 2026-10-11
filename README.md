@@ -72,6 +72,16 @@ supplied source** — not that the source is authentic, and not that the quote
 `Citation.support`), and it must be fail-open: the deterministic floor is the
 guarantee; anything above it is recall.
 
+A caller can also attach a typed **support attestation**
+(`Citation.support_attestation`): its own model's machine reading of whether a
+quote supports its claim, with the model's versioned id, the hash of the exact
+question, the probabilities and a reference to their measured precision (or
+"unmeasured"). GRASP never calls a model to make one. It checks the reading's
+shape, seals it into the receipt's signed decision record
+(`grasp.legal_receipt.verify_receipt` re-checks it offline) and draws it as a
+machine reading. A reading can flag a citation for review. It can never turn a
+red citation green, and it never changes the filing verdict.
+
 ## Signing, honestly stated
 
 Records are hash-chained and Merkle-rooted; sealed **HMAC-SHA256 by default**

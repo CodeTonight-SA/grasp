@@ -1,0 +1,30 @@
+{
+  "title": "Limitation memo - Jane Example v Example Widgets Ltd",
+  "response": "The claim is time-barred [[cite:c1]], and notice was given [[cite:c2]].",
+  "sources": [
+    {
+      "id": "act",
+      "label": "Example Limitation Act (fictional)",
+      "text": "An action founded on simple contract shall not be brought after the expiration of six years from the date on which the cause of action accrued."
+    },
+    {
+      "id": "letter",
+      "label": "Letter from example.org (fictional)",
+      "text": "Dear Ms Example, we write to give notice of the claim. Yours faithfully, Example Widgets Ltd, example.org"
+    }
+  ],
+  "citations": [
+    {
+      "id": "c1",
+      "claim": "Contract claims are barred after six years.",
+      "source_id": "act",
+      "quote": "shall not be brought after the expiration of six years"
+    },
+    {
+      "id": "c2",
+      "claim": "Notice of the claim was given.",
+      "source_id": "letter",
+      "quote": "we write to give notice of the claim"
+    }
+  ]
+}
