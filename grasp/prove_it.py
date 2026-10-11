@@ -81,6 +81,9 @@ class Source:
 
 SUPPORT_VERDICTS = ("supports", "contradicts", "says_nothing")
 REVIEW_BELOW = 0.8  # a reading backed by less than this is flagged for review
+# How far a reading's probabilities may sum above 1 and still be a distribution:
+# a model that rounds to two decimals can report 0.34 + 0.34 + 0.33 = 1.01.
+PROBABILITY_SUM_TOLERANCE = 0.02
 PRECISION_UNMEASURED = "unmeasured"
 _SHA256_HEX_RE = re.compile(r"[0-9a-f]{64}")
 _VERDICT_WORDS = {
@@ -97,7 +100,13 @@ def _require_text(name: str, value: object) -> None:
 
 
 def _check_probabilities(probabilities: object) -> None:
-    """Refuse anything but a non-empty map from a known verdict to a number from 0 to 1."""
+    """Refuse anything but a non-empty map from a known verdict to a number from 0 to 1,
+    whose numbers sum to at most 1 (within PROBABILITY_SUM_TOLERANCE).
+
+    The answers are mutually exclusive, so their probabilities cannot sum above 1.
+    Three values of 0.9 are each in range and are not a distribution: accepted, such
+    a reading would be drawn as a clean "supports" at 0.90 with no review flag. A sum
+    below 1 is allowed, because a caller may report only some of the answers."""
     if not isinstance(probabilities, dict) or not probabilities:
         raise ValueError("support attestation: probabilities must be a non-empty "
                          "mapping from verdict to probability")
@@ -112,6 +121,10 @@ def _check_probabilities(probabilities: object) -> None:
         if not 0.0 <= value <= 1.0:  # also refuses NaN and infinity
             raise ValueError(f"support attestation: the probability for {verdict} "
                              f"must lie between 0 and 1, got {value!r}")
+    total = sum(probabilities.values())
+    if total > 1.0 + PROBABILITY_SUM_TOLERANCE:
+        raise ValueError("support attestation: probabilities must sum to at most 1, "
+                         f"because the answers exclude each other. They sum to {total:.3f}")
 
 
 def _check_attestation(att: "SupportAttestation") -> None:

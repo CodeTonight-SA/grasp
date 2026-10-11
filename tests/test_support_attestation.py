@@ -95,6 +95,36 @@ def test_probabilities_must_be_a_non_empty_mapping(probabilities):
         pi.SupportAttestation(**_fields(probabilities=probabilities))
 
 
+@pytest.mark.parametrize("probabilities", [
+    {"supports": 0.9, "contradicts": 0.9, "says_nothing": 0.9},  # each in range, sum 2.7
+    {"supports": 0.85, "says_nothing": 0.9},                     # two answers both "sure"
+    {"supports": 0.6, "contradicts": 0.44},                      # sum 1.04, past rounding
+])
+def test_probabilities_that_are_not_a_distribution_are_refused(probabilities):
+    """Accepted, the first of these would be drawn as a clean "supports" at 0.90 with
+    no review flag, although no model can be 90% sure of three exclusive answers.
+
+    Mutations: (a) the sum check is skipped (all three red); (b) the tolerance widens
+    from 0.02 to 0.05 (the 1.04 case red).
+    """
+    with pytest.raises(ValueError, match="sum to at most 1"):
+        pi.SupportAttestation(**_fields(probabilities=probabilities))
+
+
+@pytest.mark.parametrize("probabilities", [
+    {"supports": 0.34, "contradicts": 0.34, "says_nothing": 0.33},  # rounded, sum 1.01
+    {"supports": 0.85},                                            # only some answers
+])
+def test_rounded_or_partial_distributions_are_accepted(probabilities):
+    """A model that rounds can overshoot 1 slightly, and a caller may report only some
+    answers. Neither is refused.
+
+    Mutation: the tolerance falls from 0.02 to 0 (the rounded case red).
+    """
+    att = pi.SupportAttestation(**_fields(probabilities=probabilities))
+    assert att.probabilities == probabilities
+
+
 def test_probabilities_must_name_known_verdicts():
     """Mutation: the unknown-verdict check on the probability keys is skipped."""
     with pytest.raises(ValueError, match="unknown verdict"):
@@ -161,14 +191,24 @@ def test_reading_owns_its_probabilities():
     ("supports", {"supports": 0.79, "contradicts": 0.21}, True),    # top probability below 0.8
     ("contradicts", {"contradicts": 0.97, "supports": 0.03}, True),
     ("says_nothing", {"says_nothing": 0.95, "supports": 0.05}, True),
-    ("supports", {"supports": 0.85, "says_nothing": 0.9}, True),    # another answer on top
 ])
 def test_review_flag(verdict, probabilities, flagged):
     """The amber flag is raised unless the reading clearly backs the claim.
 
     Mutations: (a) the review line moves from 0.8 to 0.75; (b) the
-    ``verdict != "supports"`` test is dropped; (c) the "another answer on top"
-    test is dropped.
+    ``verdict != "supports"`` test is dropped.
     """
     att = pi.SupportAttestation(**_fields(verdict=verdict, probabilities=probabilities))
     assert att.needs_review is flagged
+
+
+def test_review_flag_when_another_answer_is_on_top():
+    """A well-formed reading cannot give "supports" at least 0.8 and another answer more,
+    because its probabilities sum to at most 1. A reading changed in place after it was
+    made can, and the flag still goes up (writing it out is refused separately).
+
+    Mutation: the "another answer on top" test in ``needs_review`` is dropped.
+    """
+    att = pi.SupportAttestation(**_fields(probabilities={"supports": 0.85, "says_nothing": 0.15}))
+    att.probabilities["says_nothing"] = 0.9
+    assert att.needs_review is True
