@@ -33,7 +33,7 @@ from typing import Any
 from grasp.home import grasp_home
 from grasp.keys import signing_key
 
-HAPPI_VERSION = "1.5"
+HAPPI_VERSION = "1.6"
 
 
 def _default_idr_path() -> Path:
