@@ -16,6 +16,14 @@ SUPPORT the claim?) is a caller-side integration seam: populate each
 the artifact renders the council table. The deterministic floor is the
 guarantee; any L2 is recall on top and must be fail-open.
 
+A caller can also attach a typed ``SupportAttestation`` to a citation
+(``Citation.support_attestation``): its own model's reading of whether the
+quote supports the claim. GRASP never makes one, because it never calls a
+model. It checks the reading's shape, seals it with the receipt (see
+:mod:`grasp.provenance`) and draws it as a machine reading. A reading can add
+an amber "review" flag. It can never change ``status``, so a red citation
+stays red whatever the reading says.
+
 Scope honesty: the floor proves a quote is **verbatim in the supplied source**
 — not that the source is authentic, and not that the quote supports the claim.
 
@@ -29,7 +37,7 @@ import html
 import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -67,6 +75,152 @@ class Source:
     text: str
 
 
+# ---------------------------------------------------------------------------
+# Support attestation: a caller's typed machine reading (optional, sealed)
+# ---------------------------------------------------------------------------
+
+SUPPORT_VERDICTS = ("supports", "contradicts", "says_nothing")
+REVIEW_BELOW = 0.8  # a reading backed by less than this is flagged for review
+# How far a reading's probabilities may sum above 1 and still be a distribution:
+# a model that rounds to two decimals can report 0.34 + 0.34 + 0.33 = 1.01.
+PROBABILITY_SUM_TOLERANCE = 0.02
+PRECISION_UNMEASURED = "unmeasured"
+_SHA256_HEX_RE = re.compile(r"[0-9a-f]{64}")
+_VERDICT_WORDS = {
+    "supports": "supports the claim",
+    "contradicts": "contradicts the claim",
+    "says_nothing": "says nothing about the claim",
+}
+
+
+def _require_text(name: str, value: object) -> None:
+    """Refuse an empty or non-string identity field."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"support attestation: {name} must be a non-empty string")
+
+
+def _check_probabilities(probabilities: object) -> None:
+    """Refuse anything but a non-empty map from a known verdict to a number from 0 to 1,
+    whose numbers sum to at most 1 (within PROBABILITY_SUM_TOLERANCE).
+
+    The answers are mutually exclusive, so their probabilities cannot sum above 1.
+    Three values of 0.9 are each in range and are not a distribution: accepted, such
+    a reading would be drawn as a clean "supports" at 0.90 with no review flag. A sum
+    below 1 is allowed, because a caller may report only some of the answers."""
+    if not isinstance(probabilities, dict) or not probabilities:
+        raise ValueError("support attestation: probabilities must be a non-empty "
+                         "mapping from verdict to probability")
+    unknown = [repr(k) for k in probabilities if k not in SUPPORT_VERDICTS]
+    if unknown:
+        raise ValueError("support attestation: probabilities name an unknown verdict: "
+                         + ", ".join(unknown))
+    for verdict, value in probabilities.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"support attestation: the probability for {verdict} "
+                             "must be a number")
+        if not 0.0 <= value <= 1.0:  # also refuses NaN and infinity
+            raise ValueError(f"support attestation: the probability for {verdict} "
+                             f"must lie between 0 and 1, got {value!r}")
+    total = sum(probabilities.values())
+    if total > 1.0 + PROBABILITY_SUM_TOLERANCE:
+        raise ValueError("support attestation: probabilities must sum to at most 1, "
+                         f"because the answers exclude each other. They sum to {total:.3f}")
+
+
+def _check_attestation(att: "SupportAttestation") -> None:
+    """Refuse a malformed reading. Raises ValueError naming the field at fault."""
+    for name in ("provider", "model", "precision_ref"):
+        _require_text(name, getattr(att, name))
+    if not isinstance(att.question_sha256, str) or not _SHA256_HEX_RE.fullmatch(att.question_sha256):
+        raise ValueError("support attestation: question_sha256 must be 64 lowercase hex "
+                         "characters, the SHA-256 of the exact question asked")
+    if att.verdict not in SUPPORT_VERDICTS:
+        raise ValueError("support attestation: verdict must be one of "
+                         f"{', '.join(SUPPORT_VERDICTS)}, got {att.verdict!r}")
+    _check_probabilities(att.probabilities)
+    if not isinstance(att.calibrated, bool):
+        raise ValueError("support attestation: calibrated must be true or false")
+    if att.machine_reading is not True:
+        raise ValueError("support attestation: machine_reading must be true. An "
+                         "attestation is a machine reading, never a proof or a person's judgement")
+
+
+@dataclass(frozen=True)
+class SupportAttestation:
+    """A caller's machine reading of whether a quote supports its claim.
+
+    GRASP never makes one: it never calls a model. A caller asks its own typed
+    classifier (in practice HAL's decision model, which returns probabilities
+    and never prose) and hands GRASP the answer. GRASP checks the shape, seals
+    it into the receipt's signed decision record, verifies it and draws it as a
+    machine reading. A reading is an opinion, not a proof. It can add an amber
+    "review" flag, and it can never change ``Citation.status``.
+
+    ``provider`` and ``model`` name what answered (``model`` is the versioned
+    id, for example ``jev-1.13.0``). ``question_sha256`` is the SHA-256 of the
+    exact question asked. ``verdict`` is one of ``SUPPORT_VERDICTS``.
+    ``probabilities`` maps each verdict to a number from 0 to 1. ``calibrated``
+    says whether those numbers are calibrated. ``machine_reading`` must be True.
+    ``precision_ref`` points at the measured precision of the set-up that made
+    the reading, or is ``"unmeasured"``.
+    """
+
+    provider: str
+    model: str
+    question_sha256: str
+    verdict: str
+    probabilities: dict[str, float]
+    calibrated: bool
+    machine_reading: bool
+    precision_ref: str
+
+    def __post_init__(self) -> None:
+        _check_attestation(self)
+        # Own a copy, so a caller changing its dict later cannot change the reading.
+        object.__setattr__(self, "probabilities",
+                           {k: float(v) for k, v in self.probabilities.items()})
+
+    @classmethod
+    def from_dict(cls, data: object) -> "SupportAttestation":
+        """Rebuild a reading from its JSON form. Every field must be there, and no other."""
+        if not isinstance(data, dict):
+            raise ValueError("support attestation must be a JSON object")
+        names = [f.name for f in fields(cls)]
+        missing = [n for n in names if n not in data]
+        unknown = sorted(str(k) for k in data if k not in names)
+        if missing or unknown:
+            raise ValueError(f"support attestation: missing fields {missing}, "
+                             f"unknown fields {unknown}")
+        return cls(**{n: data[n] for n in names})
+
+    def to_dict(self) -> dict:
+        """The JSON form that is sealed and stored. It is checked again here, so a
+        reading changed in place after it was made can never be sealed unchecked."""
+        _check_attestation(self)
+        out = {f.name: getattr(self, f.name) for f in fields(self)}
+        out["probabilities"] = dict(self.probabilities)
+        return out
+
+    @property
+    def top_probability(self) -> float:
+        """The largest probability in the reading."""
+        return max(self.probabilities.values())
+
+    @property
+    def needs_review(self) -> bool:
+        """True when a person should check this citation by hand.
+
+        A reading passes without a flag only when it says "supports", gives
+        "supports" at least 0.8, and gives no other answer more. So a reading
+        that says "contradicts" or "says_nothing", or whose top probability is
+        below 0.8, is always flagged. So is a "supports" reading that puts
+        another answer on top.
+        """
+        backing = self.probabilities.get(self.verdict, 0.0)
+        return (self.verdict != "supports" or backing < REVIEW_BELOW
+                or backing < self.top_probability)
+
+
 @dataclass
 class Citation:
     """A claim → verbatim-quote → source link, resolved by verify_all()."""
@@ -80,6 +234,8 @@ class Citation:
     matched: str = ""
     support: str = ""  # L2 verdict: "" | supported | partial | unsupported | unavailable | n/a
     support_detail: str = ""  # L2 judge one-liner + agreement
+    # A caller's sealed machine reading (see SupportAttestation). Never changes status.
+    support_attestation: SupportAttestation | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +291,16 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _citation_record(c: Citation) -> dict:
+    """One citation's provenance entry. A support attestation is added only when
+    there is one, so a run without one records exactly what it did before."""
+    record = {"id": c.id, "source_id": c.source_id, "status": c.status,
+              "start": c.start, "end": c.end, "support": c.support}
+    if c.support_attestation is not None:
+        record["support_attestation"] = c.support_attestation.to_dict()
+    return record
+
+
 def provenance(sources: list[Source], citations: list[Citation]) -> dict:
     """Verifiable provenance record (decision-chain/memory-chain ready):
     per-source SHA-256, per-citation status + offsets, and the grounding rate."""
@@ -148,11 +314,7 @@ def provenance(sources: list[Source], citations: list[Citation]) -> dict:
             s.id: {"label": s.label, "sha256": _sha256(s.text), "chars": len(s.text)}
             for s in sources
         },
-        "citations": [
-            {"id": c.id, "source_id": c.source_id, "status": c.status,
-             "start": c.start, "end": c.end, "support": c.support}
-            for c in citations
-        ],
+        "citations": [_citation_record(c) for c in citations],
         "tally": tally,
         "grounding_rate": round(grounded / max(len(citations), 1), 3),
     }
@@ -164,6 +326,16 @@ def provenance(sources: list[Source], citations: list[Citation]) -> dict:
 
 def _esc(s: str) -> str:
     return html.escape(s, quote=True)
+
+
+#: <, > and & written as JSON escapes, so no string in the provenance (a source
+#: label, a support attestation) can close the <script> element it sits in and
+#: become markup. The JSON still parses to exactly the same values.
+_SCRIPT_SAFE = str.maketrans({"<": "\\u003c", ">": "\\u003e", "&": "\\u0026"})
+
+
+def _json_for_script(value) -> str:
+    return json.dumps(value).translate(_SCRIPT_SAFE)
 
 
 _HEADING_RE = re.compile(r"^(#{1,4})\s+(.*)$")
@@ -184,8 +356,9 @@ def _inline(text: str, idx: dict) -> str:
         glyph = _STATUS_GLYPH.get(meta["status"], "?")
         cls = _STATUS_CLASS.get(meta["status"], "")
         sup = f' · {meta["support"]}' if meta.get("support") else ""
+        badge = _REVIEW_BADGE if meta.get("review") else ""
         return (f'<a class="cite {cls}" data-cite="{_esc(cid)}" '
-                f'title="{meta["status"]}{sup}">[{meta["n"]}{glyph}]</a>')
+                f'title="{meta["status"]}{sup}">[{meta["n"]}{glyph}]</a>{badge}')
 
     return _CITE_RE.sub(chip, out)
 
@@ -333,12 +506,76 @@ def _council_table(citations: list[Citation], idx: dict) -> str:
     return "".join(rows)
 
 
+# Machine readings (support attestations). Their styles are added to a page only
+# when it carries a reading, so a page without one is drawn exactly as before.
+_READING_CSS = """
+.review{display:inline-block;margin-left:3px;padding:0 5px;border-radius:5px;font-size:.72em;
+font-weight:600;color:var(--fuzzy);border:1px solid var(--fuzzy)}
+a.cite+.review{vertical-align:super}
+p.note{color:var(--mut);font-size:13px}
+"""
+_REVIEW_BADGE = ('<span class="review" title="a machine reading of this quote is unsure, '
+                 'or does not back the claim. Check it by hand.">review</span>')
+
+
+def _review_flag(c: Citation) -> bool:
+    """The amber flag goes only on a quote that was found: red stays red, and a
+    reading can never soften it."""
+    att = c.support_attestation
+    return att is not None and c.status != STATUS_NOT_FOUND and att.needs_review
+
+
+def _precision_words(att: SupportAttestation) -> str:
+    if att.precision_ref == PRECISION_UNMEASURED:
+        return "precision unmeasured"
+    return f"precision: {att.precision_ref}"
+
+
+def _reading_cells(c: Citation) -> str:
+    """The verdict, probability and flag cells. A quote that is not in its source
+    gets none of them: its reading is not used."""
+    att = c.support_attestation
+    if c.status == STATUS_NOT_FOUND:
+        return ("<td class='bad' colspan='3'>not used: the quote is not in its source, "
+                "so no reading can back it</td>")
+    calibration = "calibrated" if att.calibrated else "not calibrated"
+    flag = _REVIEW_BADGE if att.needs_review else "none"
+    return (f"<td>{_VERDICT_WORDS[att.verdict]}</td>"
+            f"<td>{att.top_probability:.2f} ({calibration})</td><td>{flag}</td>")
+
+
+def _readings_table(citations: list[Citation], idx: dict) -> str:
+    """Machine readings, shown only when a caller attached any, and labelled as
+    readings, never as proof."""
+    attested = [c for c in citations if c.support_attestation is not None]
+    if not attested:
+        return ""
+    rows = ["<h2>Machine readings: a caller's model read each quote against its claim</h2>",
+            "<p class='note'>A machine reading is a model's opinion, not proof. It never "
+            "changes the quote check (✓ ≈ ✗). A reading that is unsure, or that does not "
+            "back the claim, is marked review.</p>",
+            "<table class='council'><tr><th>#</th><th>quote check</th><th>machine reading</th>"
+            "<th>top probability</th><th>flag</th><th>model</th><th>precision</th></tr>"]
+    for c in attested:
+        att = c.support_attestation
+        l1 = f'{_STATUS_GLYPH.get(c.status, "?")} {c.status}'
+        rows.append(f"<tr><td>{idx[c.id]['n']}</td>"
+                    f"<td class='{_STATUS_CLASS.get(c.status, '')}'>{l1}</td>{_reading_cells(c)}"
+                    f"<td>{_esc(att.model)} ({_esc(att.provider)})</td>"
+                    f"<td>{_esc(_precision_words(att))}</td></tr>")
+    rows.append("</table>")
+    return "".join(rows)
+
+
 def build_html(title: str, response_md: str, citations: list[Citation],
                sources: list[Source], prov: dict) -> str:
     idx = {}
     for n, c in enumerate(citations, 1):
-        idx[c.id] = {"n": n, "status": c.status, "support": c.support}
+        idx[c.id] = {"n": n, "status": c.status, "support": c.support,
+                     "review": _review_flag(c)}
     body = _md_to_html(response_md, idx)
+    readings = _readings_table(citations, idx)
+    css = _CSS + _READING_CSS if readings else _CSS
 
     cites_by_src: dict[str, list[Citation]] = {}
     for c in citations:
@@ -360,16 +597,17 @@ def build_html(title: str, response_md: str, citations: list[Citation],
     return (
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        f"<title>{_esc(title)}</title><style>{_CSS}</style></head><body>"
+        f"<title>{_esc(title)}</title><style>{css}</style></head><body>"
         f"<header><h1>{_esc(title)}</h1><div class='banner'>{banner}</div></header>"
-        f"<div class='wrap'><div class='pane left'>{body}{_council_table(citations, idx)}</div>"
+        f"<div class='wrap'><div class='pane left'>{body}{_council_table(citations, idx)}"
+        f"{readings}</div>"
         f"<div class='pane right'>{''.join(src_html)}</div></div>"
         f"<footer>prove-it deterministic provenance · generated {_esc(prov['generated'])} · "
         f"every citation verified verbatim against its source (L1). "
         f"<a class='cite ok' style='vertical-align:baseline'>[n✓]</a> exact "
         f"<a class='cite fuzzy' style='vertical-align:baseline'>[n≈]</a> whitespace-variant "
         f"<a class='cite bad' style='vertical-align:baseline'>[n✗]</a> NOT in source (possible fabrication)"
-        f"<script type='application/json' id='provenance'>{json.dumps(prov)}</script></footer>"
+        f"<script type='application/json' id='provenance'>{_json_for_script(prov)}</script></footer>"
         f"<script>{_JS}</script></body></html>"
     )
 
@@ -386,17 +624,27 @@ def _load_source(s: dict) -> Source:
                   text=p.read_text(encoding="utf-8", errors="replace"))
 
 
+def _load_citation(c: dict) -> Citation:
+    """A spec citation. Its optional ``support_attestation`` (a JSON object, see
+    SupportAttestation) is checked on the way in: a malformed one raises ValueError."""
+    raw = c.get("support_attestation")
+    attestation = None if raw is None else SupportAttestation.from_dict(raw)
+    return Citation(id=str(c["id"]), claim=c["claim"], source_id=c["source_id"],
+                    quote=c["quote"], support_attestation=attestation)
+
+
 def render(spec: dict) -> tuple[str, dict]:
     """Render a prove-it spec → (html, provenance). spec keys: title, response
-    (markdown with [[cite:ID]] tokens), sources[], citations[].
+    (markdown with [[cite:ID]] tokens), sources[], citations[]. A citation may
+    carry a ``support_attestation``: a caller's machine reading, recorded and
+    drawn beside the quote check and never changing it.
 
     L2 seam: to add support verdicts, resolve citations yourself
     (``verify_all``), populate ``Citation.support`` / ``support_detail``, then
     call ``provenance`` + ``build_html`` directly.
     """
     sources = [_load_source(s) for s in spec["sources"]]
-    cites = [Citation(id=str(c["id"]), claim=c["claim"], source_id=c["source_id"], quote=c["quote"])
-             for c in spec["citations"]]
+    cites = [_load_citation(c) for c in spec["citations"]]
     verify_all(cites, sources)
     prov = provenance(sources, cites)
     return build_html(spec.get("title", "prove-it artifact"), spec["response"], cites, sources, prov), prov

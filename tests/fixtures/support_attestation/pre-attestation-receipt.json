@@ -1,0 +1,59 @@
+{
+  "receipt_version": 1,
+  "kind": "grasp-legal-receipt",
+  "title": "Limitation memo - Jane Example v Example Widgets Ltd",
+  "matter": "EX-0001",
+  "jurisdiction": "Example Land",
+  "created_utc": "2026-10-10T11:46:24.322374+00:00",
+  "deliverable": null,
+  "grounding_rate": 1.0,
+  "tally": {
+    "verified": 2,
+    "fuzzy": 0,
+    "not_found": 0
+  },
+  "sources": {
+    "act": {
+      "label": "Example Limitation Act (fictional)",
+      "sha256": "1ecc0a50c858dab841f73d1338174f6739bac3abb797b42448f9645035237df9",
+      "chars": 143
+    },
+    "letter": {
+      "label": "Letter from example.org (fictional)",
+      "sha256": "f126edbffe97be516a189ca3219434ac6a01c37a8dfe634367153097f1cfe5e8",
+      "chars": 105
+    }
+  },
+  "citations": [
+    {
+      "id": "c1",
+      "source_id": "act",
+      "status": "verified",
+      "start": 37,
+      "end": 91,
+      "support": ""
+    },
+    {
+      "id": "c2",
+      "source_id": "letter",
+      "status": "verified",
+      "start": 17,
+      "end": 53,
+      "support": ""
+    }
+  ],
+  "chain": {
+    "recorded": true,
+    "idr_addr": "sha256:431fb88b4071290a56f38a68b563a79db889220b0f1f0178d7c75c7bfaa27ae0",
+    "memory_head": "precog-1791632784-05f6b1fc",
+    "reason": "recorded"
+  },
+  "filed_safe": true,
+  "filed_safe_reason": "all 2 citation(s) verbatim-present in their cited sources",
+  "verify_howto": [
+    "Re-hash each source text (SHA-256) and compare with sources[*].sha256 — a changed source cannot match.",
+    "For each citation, read the source at [start, end) — the quoted words must be there verbatim (fuzzy tolerates whitespace/typography only, never words).",
+    "Any citation with status not_found is a quote its cited source does not contain — the deliverable must not be filed on it.",
+    "chain.idr_addr / chain.memory_head are the signed decision + belief records; verify them against the IDR forest and memory chain."
+  ]
+}
