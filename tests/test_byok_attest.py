@@ -18,6 +18,7 @@ import email.message
 import importlib
 import io
 import json
+import subprocess
 import sys
 import time
 import urllib.error
@@ -275,6 +276,52 @@ def test_low_confidence_reading_is_flagged_for_review(monkeypatch):
     report = byok.attest_spec(spec, model="jev-latest", key="k")
     assert report["attested"] == 1
     assert report["flagged"] == 1
+
+
+def test_attested_output_still_seals_through_render_and_legal_receipt(monkeypatch, tmp_path):
+    """AGORA's technical speaker (Grok, PR #24) named this falsifier: feed an
+    ``attest_spec`` result straight into ``grasp.prove_it.render`` and a sealed
+    ``grasp.legal_receipt``, and confirm neither schema nor hash changed.
+
+    Mutation: ``support_reading`` passes ``calibrated=1`` (an int, not a bool)
+    to ``SupportAttestation`` -- the shape this example promises GRASP.
+    """
+    from grasp import legal_receipt as lr
+
+    fake, _ = _sequenced_urlopen([_FakeResponse(200, {}, _ok_answers(SUPPORTS_FORWARD, SUPPORTS_REVERSED))])
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    spec = _spec()
+    spec["citations"] = [spec["citations"][0]]
+    byok.attest_spec(spec, model="jev-latest", key="k")
+
+    html, prov = prove_it.render(spec)
+    assert "jev-1.13.0" in html
+    assert prov["tally"]["verified"] == 1
+
+    ledgers = {"path": tmp_path / "context.jsonl", "idr_path": tmp_path / "idr.jsonl",
+              "head_pointer": tmp_path / "HEAD"}
+    receipt, _html = lr.build_legal_receipt(spec, **ledgers)
+    result = lr.verify_receipt(receipt, idr_path=tmp_path / "idr.jsonl")
+    assert result == {"ok": True, "problems": []}
+
+
+def test_importing_the_module_makes_no_network_call(tmp_path):
+    """Mutation: a bare ``main()`` call is added before the ``__main__`` guard,
+    so importing the module (with no usable argv) would run it unconditionally.
+    """
+    probe = (
+        "import sys; sys.path.insert(0, %r)\n"
+        "import urllib.request\n"
+        "def boom(*a, **k):\n"
+        "    raise AssertionError('import must not touch the network')\n"
+        "urllib.request.urlopen = boom\n"
+        "import examples.byok_attest\n"
+        "print('ok')\n"
+    ) % str(REPO_ROOT)
+    proc = subprocess.run([sys.executable, "-c", probe], cwd=str(REPO_ROOT),
+                          capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "ok"
 
 
 # ---------------------------------------------------------------------------

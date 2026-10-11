@@ -10,9 +10,10 @@ itself. This script is that caller, for a GRASP customer who wants readings
 without sending their own claim text through CodeTonight: it reads
 ``TYPESAFE_API_KEY`` from THIS machine's own environment and talks to
 TypeSafe's Jev model directly, with no GRIP or HAL runtime in the path. The
-customer's text goes only to their own TypeSafe account (the Jev integration
-plan's decision D-3: "bring your own key" --
-``~/.grip/plans/snug-questing-quill.md`` Phase 3.5).
+customer's text goes only to their own TypeSafe account -- a deliberate "bring
+your own key" design, not an afterthought: CodeTonight's own data limit on
+internal/public text only means a customer's own claim text could never be
+sent through CodeTonight's own systems in the first place.
 
 It lives OUTSIDE the ``grasp`` package on purpose, so "grasp never imports a
 provider SDK" keeps holding for the library itself -- only this example reaches
