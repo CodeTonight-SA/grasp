@@ -149,16 +149,49 @@ Outcome = tuple[Optional[int], dict, Any]
 Send = Callable[..., dict]
 
 
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    """Refuses every redirect. ``urllib``'s default handling forwards the
+    ``Authorization`` header to wherever a 3xx points -- a different host, or
+    an https-to-http downgrade, included (CPython's own documented, if
+    surprising, ``redirect_request`` behaviour: measured 2026-10-11, a dummy
+    key sent to a local redirect server arrived at the redirect TARGET too).
+    This script only ever talks to one fixed endpoint, so any redirect is
+    treated as a bad response, never followed with the key attached."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102 -- stdlib signature
+        return None
+
+
+_REDIRECTS_DISABLED = False
+
+
+def _disable_redirects_once() -> None:
+    """Install a redirect-refusing opener as the process-wide default, exactly
+    once. This changes ``urllib.request.urlopen``'s OWN behaviour (the single
+    call every test here stubs outright, so the stub bypasses this entirely);
+    it does not change which function is called. Scoped to this one-shot CLI
+    process -- see the module docstring."""
+    global _REDIRECTS_DISABLED
+    if not _REDIRECTS_DISABLED:
+        urllib.request.install_opener(urllib.request.build_opener(_NoRedirects()))
+        _REDIRECTS_DISABLED = True
+
+
 def _attempt(endpoint: str, data: bytes, headers: dict, timeout: float) -> Outcome:
     """One POST. ``urllib.request.urlopen`` is called through the module, not
     imported by name, so a test can stub the one shared object and nothing
     here can reach the network regardless of how it was called."""
+    _disable_redirects_once()
     request = urllib.request.Request(endpoint, data=data, method="POST", headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, dict(response.headers), response.read()
     except urllib.error.HTTPError as exc:
-        return exc.code, dict(exc.headers or {}), exc.read()
+        try:
+            body = exc.read()
+        except Exception:  # noqa: BLE001 -- the error BODY failed to read; the status code still stands
+            body = b""
+        return exc.code, dict(exc.headers or {}), body
     except Exception as exc:  # noqa: BLE001 -- a connection failure or timeout, never the request itself
         timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
         return None, {}, "timeout" if timed_out else "unreachable"
@@ -299,6 +332,15 @@ def _window(c: "prove_it.Citation", by_id: dict) -> str:
 
 # --- averaging the two option orders (lib/prove_it_decide.py) --------------
 
+#: A value right at the tolerance boundary (three thirds of 1.02, say) does not
+#: reach it in IEEE-754: ``abs(0.34 + 0.34 + 0.34 - 1.0)`` is
+#: ``0.020000000000000018``, not ``0.02`` (measured 2026-10-11; the sovereign
+#: council's Astra seat on this PR found it). This absorbs that representation
+#: noise without loosening the real tolerance by anything a model's answer
+#: could land on.
+_FLOAT_SLACK = 1e-9
+
+
 def _complete(answer: Any) -> dict[str, float]:
     """One order's probability per verdict, or ``{}`` if any is missing,
     malformed, or the three do not sum to 1 within tolerance -- three values of
@@ -308,7 +350,8 @@ def _complete(answer: Any) -> dict[str, float]:
     valid = {v: float(probs[v]) for v in prove_it.SUPPORT_VERDICTS
              if isinstance(probs.get(v), (int, float)) and not isinstance(probs.get(v), bool)
              and 0 <= probs[v] <= 1}
-    if len(valid) != len(prove_it.SUPPORT_VERDICTS) or abs(sum(valid.values()) - 1.0) > _DISTRIBUTION_TOLERANCE:
+    if len(valid) != len(prove_it.SUPPORT_VERDICTS) \
+            or abs(sum(valid.values()) - 1.0) > _DISTRIBUTION_TOLERANCE + _FLOAT_SLACK:
         return {}
     return valid
 
@@ -336,10 +379,18 @@ def support_reading(claim: str, quote: str, *, model: str, key: str,
     if not probs:
         return None, "incomplete_answer"
     verdict = max(prove_it.SUPPORT_VERDICTS, key=lambda v: probs[v])
-    reading = prove_it.SupportAttestation(
-        provider="typesafe", model=str(result.get("model") or model), question_sha256=QUESTION_SHA256,
-        verdict=verdict, probabilities=probs, calibrated=False, machine_reading=True,
-        precision_ref=prove_it.PRECISION_UNMEASURED)
+    # A whitespace-only vendor model id is truthy, so "x or model" would keep
+    # it rather than falling back -- and GRASP's stricter non-empty-after-
+    # strip check would then raise and crash the whole run, not just this
+    # citation (the sovereign council's Astra seat on this PR found it).
+    vendor_model = str(result.get("model") or "").strip()
+    try:
+        reading = prove_it.SupportAttestation(
+            provider="typesafe", model=vendor_model or model, question_sha256=QUESTION_SHA256,
+            verdict=verdict, probabilities=probs, calibrated=False, machine_reading=True,
+            precision_ref=prove_it.PRECISION_UNMEASURED)
+    except ValueError:
+        return None, "invalid_attestation"
     return reading, "ok"
 
 

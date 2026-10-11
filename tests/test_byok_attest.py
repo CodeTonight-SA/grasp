@@ -2,9 +2,14 @@
 # Copyright (C) 2026 CodeTonight SA
 """Tests for the bring-your-own-key TypeSafe/Jev attestation example.
 
-Every test stubs ``urllib.request.urlopen`` itself -- the shared module
-attribute, never a name imported out of it -- so none of these can reach the
-real network, whatever path the code takes to call it.
+Every test but one stubs ``urllib.request.urlopen`` itself -- the shared
+module attribute, never a name imported out of it -- so none of those can
+reach the real network, whatever path the code takes to call it. The one
+exception, ``test_redirect_is_never_followed_with_the_key``, proves a
+redirect-following defect that a stub cannot exercise (stubbing ``urlopen``
+bypasses urllib's own opener/handler chain entirely, which is exactly the
+code path the defect lives in), so it talks to two throwaway HTTP servers on
+loopback (127.0.0.1) only -- no DNS, no real network.
 
 Each test here was shown failing first against a real mutation of
 ``examples/byok_attest.py``'s saved bytes, the file was then restored byte for
@@ -15,11 +20,13 @@ from __future__ import annotations
 
 import ast
 import email.message
+import http.server
 import importlib
 import io
 import json
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -535,3 +542,118 @@ def test_verify_path_still_imports_no_provider_code():
     guard module -- or of this import -- would otherwise go unnoticed here)."""
     mod = importlib.import_module("tests.test_support_attestation_seal")
     assert hasattr(mod, "test_verify_path_imports_no_provider_code")
+
+
+# ---------------------------------------------------------------------------
+# findings from the sovereign council's review of this PR (seal
+# b58f32a690850470), each verified against the real code before being fixed,
+# each anchored here so it cannot regress
+# ---------------------------------------------------------------------------
+
+class _RedirectingHandler(http.server.BaseHTTPRequestHandler):
+    """Answers every POST with a 302 to ``target_url`` (set by the test)."""
+
+    target_url = ""
+
+    def do_POST(self):  # noqa: N802 -- http.server's own method name
+        self.send_response(302)
+        self.send_header("Location", self.target_url)
+        self.end_headers()
+
+    def log_message(self, *a):  # noqa: D102 -- keep test output clean
+        pass
+
+
+class _TargetHandler(http.server.BaseHTTPRequestHandler):
+    """Records every ``Authorization`` header it is sent, answers 200."""
+
+    seen_auth: list = []
+
+    def do_GET(self):  # noqa: N802 -- http.server's own method name
+        type(self).seen_auth.append(self.headers.get("Authorization"))
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"{}")
+
+    def log_message(self, *a):  # noqa: D102 -- keep test output clean
+        pass
+
+
+def _serve(handler_cls) -> http.server.HTTPServer:
+    server = http.server.HTTPServer(("127.0.0.1", 0), handler_cls)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def test_redirect_is_never_followed_with_the_key():
+    """A real redirect server (loopback only) answers 302 to a real target
+    server (loopback only); the Authorization header must never reach the
+    target, and the run comes back as a bad response, not a crash. Stubbing
+    ``urlopen`` cannot exercise this -- the defect lives in urllib's own
+    opener/handler chain, which a stub bypasses entirely.
+
+    Mutation: ``_attempt`` never calls ``_disable_redirects_once``.
+    """
+    _TargetHandler.seen_auth = []
+    target = _serve(_TargetHandler)
+    _RedirectingHandler.target_url = f"http://127.0.0.1:{target.server_address[1]}/elsewhere"
+    redirector = _serve(_RedirectingHandler)
+    try:
+        result = byok.decide("state", byok.QUESTIONS, model="jev-latest", key="apikey_CANARY-DUMMY",
+                             endpoint=f"http://127.0.0.1:{redirector.server_address[1]}/jev")
+    finally:
+        target.shutdown()
+        redirector.shutdown()
+    assert _TargetHandler.seen_auth == []
+    assert result["ok"] is False
+
+
+class _ReadFailsHTTPError(urllib.error.HTTPError):
+    """An HTTPError whose own ``.read()`` raises -- a connection dropping
+    while the ERROR body (not the request) is being read."""
+
+    def read(self, *a, **k):
+        raise ConnectionResetError("reset while reading the error body")
+
+
+def test_error_body_read_failure_still_returns_a_retryable_outcome(monkeypatch):
+    """A failure reading the error body is a sibling of the HTTPError handler,
+    not something a bare ``except Exception`` beside it can catch -- it must
+    be guarded in place.
+
+    Mutation: ``exc.read()`` in ``_attempt`` is called unguarded again.
+    """
+    exc = _ReadFailsHTTPError(byok.ENDPOINT, 500, "", email.message.Message(), io.BytesIO(b""))
+    fake, calls = _sequenced_urlopen([exc, _FakeResponse(200, {}, _ok_answers(SUPPORTS_FORWARD, SUPPORTS_REVERSED))])
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    outcome = byok._send_with_retries(byok.ENDPOINT, b"{}", {}, sleep=lambda s: None,
+                                      clock=_fake_clock(), jitter=lambda: 0.0)
+    assert outcome[0] == 200
+    assert len(calls) == 2
+
+
+def test_vendor_whitespace_model_falls_back_to_the_requested_model(monkeypatch):
+    """A whitespace-only vendor model id is truthy, so a bare ``or`` fallback
+    would keep it, and GRASP's stricter non-empty-after-strip check would
+    then raise -- crashing every remaining citation, not just this one.
+
+    Mutation: the ``.strip()`` is dropped from ``vendor_model``.
+    """
+    payload = json.loads(_ok_answers(SUPPORTS_FORWARD, SUPPORTS_REVERSED))
+    payload["model"] = "   "
+    fake, _ = _sequenced_urlopen([_FakeResponse(200, {}, json.dumps(payload).encode("utf-8"))])
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    reading, why = byok.support_reading("claim", "quote", model="jev-latest", key="k")
+    assert why == "ok"
+    assert reading.model == "jev-latest"
+
+
+def test_probabilities_at_the_exact_tolerance_boundary_are_accepted():
+    """``0.34 + 0.34 + 0.34`` is ``0.020000000000000018`` away from 1.0 in
+    IEEE-754 floating point, not exactly ``0.02`` -- the boundary case the
+    tolerance is meant to accept must not be rejected by representation noise.
+
+    Mutation: ``_FLOAT_SLACK`` is set to ``0.0``.
+    """
+    boundary = {"supports": 0.34, "contradicts": 0.34, "says_nothing": 0.34}
+    assert byok._complete({"probabilities": boundary}) != {}
