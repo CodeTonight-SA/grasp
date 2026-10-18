@@ -28,6 +28,7 @@ import sys
 from pathlib import Path
 
 from grasp.mcp_server import SERVER_NAME, SERVER_VERSION, tool_status, tool_verify
+from grasp.keys import SigningBackendUnavailable
 
 
 def _emit(out: dict, *, as_json: bool) -> None:
@@ -402,7 +403,12 @@ def main(argv: list[str] | None = None) -> int:
     """Entry point for the ``grasp`` console script. Returns the process exit
     code (0 = ok/VERIFIED, 1 = BROKEN) so CI and git hooks can gate on it."""
     args = _build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except SigningBackendUnavailable as exc:
+        # A refusal, not a crash: one line, the remedy and the opt-in inside it.
+        print(f"grasp: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
