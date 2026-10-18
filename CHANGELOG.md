@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A missing crypto backend now refuses to sign instead of falling back to the
+  shared-key HMAC-SHA256 scheme in silence** (GRASP#20). `signing_scheme()` raises
+  `SigningBackendUnavailable`, naming the remedy (`pip install 'cryptography>=48'`)
+  and the opt-in; the `grasp` command turns it into one stderr line and exit code 2.
+  `GRASP_ALLOW_HMAC_FALLBACK=1` restores the fallback and announces once on stderr
+  that the records are not stranger-verifiable. An explicit `GRASP_SIGNING_SCHEME`
+  or `GRASP_SIGNING_KEY` is unchanged: asking for the symmetric scheme is not a
+  fallback. The default was chosen by the operator on 2026-10-18.
+
 ### Added
 
 - **Signed support attestations: a caller's machine reading, sealed with the

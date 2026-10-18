@@ -95,11 +95,20 @@ def record_proveit_provenance(
     ``spec``  — the prove-it citations spec dict (title, sources, citations).
     ``prov``  — the provenance dict returned by render() (grounding_rate, tally, …).
 
-    Returns ``{ok, grounding_rate, idr_addr, memory_head, reason}``. NEVER raises.
+    Returns ``{ok, grounding_rate, idr_addr, memory_head, reason}``. Never raises for a
+    recording failure; the one exception that propagates is a signing REFUSAL
+    (``SigningBackendUnavailable``), which is a stop the operator chose, not a failure.
     ``path`` / ``idr_path`` / ``head_pointer`` are injectable for hermetic tests.
     """
+    from grasp.keys import SigningBackendUnavailable
     try:
         return _record(spec, prov, path=path, idr_path=idr_path, head_pointer=head_pointer)
+    except SigningBackendUnavailable:
+        # A refusal is not a recording failure. Fail-open exists so that a broken
+        # ledger never costs the user their response; a missing crypto backend is
+        # the operator's chosen stop (GRASP#20, 2026-10-18), so it propagates and
+        # the CLI turns it into one stderr line and exit code 2. Nothing was written.
+        raise
     except Exception as exc:  # noqa: BLE001 — fail-open is the contract
         _warn(f"prove-it provenance recording degraded (artifact unaffected): {exc}")
         return {"ok": False, "grounding_rate": 0.0, "idr_addr": "",

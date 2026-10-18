@@ -2,8 +2,14 @@
 # Copyright (C) 2026 CodeTonight SA
 """Signing-key resolution for GRASP.
 
-The default signing scheme is HMAC-SHA256 over a locally held key. The key
-never ships with the package and never enters a record; only signatures do.
+The default signing scheme is Ed25519 when the ``cryptography`` package is
+installed. HMAC-SHA256 over a locally held key is used only when asked for:
+``GRASP_SIGNING_SCHEME=hmac-sha256``, a ``GRASP_SIGNING_KEY`` in the
+environment, or, when the crypto backend is missing, the explicit opt-in
+``GRASP_ALLOW_HMAC_FALLBACK=1``, which announces once on stderr that the record
+is not stranger-verifiable. Without that opt-in a missing backend REFUSES to
+sign (GRASP#20; the refusal became the default on 2026-10-18). The key never
+ships with the package and never enters a record; only signatures do.
 
 Resolution order:
 
@@ -18,6 +24,7 @@ import hashlib
 import hmac
 import json
 import os
+import sys
 import secrets
 from pathlib import Path
 
@@ -75,14 +82,55 @@ _SINGLE_ASYMMETRIC = {
 }
 
 
+ALLOW_HMAC_FALLBACK_ENV = "GRASP_ALLOW_HMAC_FALLBACK"
+_HMAC_REMEDY = "pip install 'cryptography>=48'"
+_fallback_announced = False
+
+
+class SigningBackendUnavailable(RuntimeError):
+    """The crypto backend is missing and no scheme was asked for explicitly.
+
+    Raised instead of signing with the shared-key fallback, because a record a
+    stranger cannot verify, produced where a verifiable one was one install
+    away, is the defect GRASP#20 names. The message carries the remedy and the
+    opt-in that restores the loud fallback.
+    """
+
+
+def _hmac_fallback_or_refuse() -> str:
+    """Step 3 of signing_scheme() when the backend is missing: refuse, or, under
+    the opt-in, fall back to HMAC-SHA256 and say so once per process."""
+    global _fallback_announced
+    if os.environ.get(ALLOW_HMAC_FALLBACK_ENV) != "1":
+        raise SigningBackendUnavailable(
+            "GRASP refuses to sign: the `cryptography` package is missing (or too old for "
+            "ML-DSA-65), so only the shared-key HMAC-SHA256 scheme is available, and a "
+            "record signed that way cannot be verified by a stranger. Remedy: "
+            f"{_HMAC_REMEDY}. To sign with the shared key anyway, set "
+            f"{ALLOW_HMAC_FALLBACK_ENV}=1 (announced once on stderr)."
+        )
+    if not _fallback_announced:
+        _fallback_announced = True
+        print(
+            "GRASP: signing with the shared-key HMAC-SHA256 fallback because the crypto "
+            "backend is missing; these records are NOT stranger-verifiable. Remedy: "
+            f"{_HMAC_REMEDY}. (Opted in through {ALLOW_HMAC_FALLBACK_ENV}=1.)",
+            file=sys.stderr,
+        )
+    return "hmac-sha256"
+
+
 def signing_scheme() -> str:
     """Resolve the active signing scheme.
 
     Precedence (least-surprise):
     1. GRASP_SIGNING_SCHEME env — explicit selection.
     2. GRASP_SIGNING_KEY set → hmac-sha256 (preserve symmetric intent).
-    3. ed25519 when cryptography is installed, else hmac-sha256
-       (the hermetic stdlib core keeps working with zero dependencies).
+    3. ed25519 when cryptography is installed; otherwise REFUSE
+       (SigningBackendUnavailable), unless GRASP_ALLOW_HMAC_FALLBACK=1, which
+       falls back to hmac-sha256 and announces it once on stderr. Until
+       2026-10-18 this step fell back silently; GRASP#20 is the defect, and the
+       refusal is the default the operator chose.
     """
     env = os.environ.get("GRASP_SIGNING_SCHEME", "").strip()
     if env:
@@ -90,7 +138,7 @@ def signing_scheme() -> str:
     if os.environ.get("GRASP_SIGNING_KEY"):
         return "hmac-sha256"
     from grasp import signing as _signing
-    return "ed25519" if _signing.crypto_available() else "hmac-sha256"
+    return "ed25519" if _signing.crypto_available() else _hmac_fallback_or_refuse()
 
 
 def _seed_env(scheme: str) -> bytes | None:
