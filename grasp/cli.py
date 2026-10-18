@@ -401,7 +401,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the ``grasp`` console script. Returns the process exit
-    code (0 = ok/VERIFIED, 1 = BROKEN) so CI and git hooks can gate on it."""
+    code so CI and git hooks can gate on it: 0 = ok/VERIFIED, 1 = BROKEN, and
+    2 = refused before any record was written (the crypto backend is missing
+    and no scheme was asked for explicitly; the one stderr line names the
+    remedy and the opt-in, see ``grasp.keys.SigningBackendUnavailable``)."""
     args = _build_parser().parse_args(argv)
     try:
         return args.func(args)

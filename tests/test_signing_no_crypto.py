@@ -59,7 +59,8 @@ def test_signing_scheme_refuses_without_the_backend_by_default(no_crypto, monkey
     with pytest.raises(keys.SigningBackendUnavailable) as excinfo:
         signing_scheme()
     text = str(excinfo.value)
-    assert "cryptography" in text and keys.ALLOW_HMAC_FALLBACK_ENV in text
+    assert "pip install 'cryptography>=48'" in text, "the remedy must be the runnable instruction"
+    assert keys.ALLOW_HMAC_FALLBACK_ENV in text
 
 
 def test_the_opt_in_falls_back_to_hmac_and_says_so_once(no_crypto, monkeypatch, capsys):
@@ -109,3 +110,33 @@ def test_the_cli_turns_the_refusal_into_one_line_and_exit_2(monkeypatch, capsys)
     assert cli.main(["seal"]) == 2
     err = capsys.readouterr().err
     assert err.startswith("grasp: ") and "remedy X" in err and "Traceback" not in err
+    assert err.count("\n") == 1 and err.endswith("\n"), f"exactly one stderr line, got {err!r}"
+
+
+def test_a_real_witness_run_without_the_backend_exits_2_with_one_line(no_crypto, monkeypatch, tmp_path, capsys):
+    """Through the real parser and the real sealing path: `grasp witness` on a
+    machine without the backend stops with exit code 2, exactly one stderr line
+    naming the remedy, and no traceback. Nothing is written under the home."""
+    import json
+    from grasp import cli
+
+    _implicit(monkeypatch)
+    monkeypatch.delenv(keys.ALLOW_HMAC_FALLBACK_ENV, raising=False)
+    home = tmp_path / "grasp-home"
+    monkeypatch.setenv("GRASP_HOME", str(home))
+    source = "facta, non verba — deeds not words; the record is checkable."
+    spec = {
+        "title": "witness-test",
+        "response": "The motto holds [[cite:c1]].",
+        "sources": [{"id": "s", "label": "src", "text": source}],
+        "citations": [{"id": "c1", "claim": "The motto holds", "source_id": "s", "quote": "facta, non verba"}],
+    }
+    spec_path = tmp_path / "spec.json"
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+
+    code = cli.main(["witness", "--input", str(spec_path), "--model", "test-model"])
+    out = capsys.readouterr()
+    assert code == 2
+    assert out.err.count("\n") == 1 and out.err.startswith("grasp: "), out.err
+    assert "pip install 'cryptography>=48'" in out.err and "Traceback" not in out.err
+    assert not any(home.rglob("*.jsonl")), "a refused seal writes no ledger line"
