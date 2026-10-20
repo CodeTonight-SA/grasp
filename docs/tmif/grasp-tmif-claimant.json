@@ -1,7 +1,7 @@
 {
   "system_identifier": "urn:codetonight:system:grasp-cryptographic-causation",
   "system_version": "1.0.0",
-  "issued_at": "2026-09-22T01:53:54Z",
+  "issued_at": "2026-10-20T14:32:31Z",
   "valid_until": "2026-12-31T23:59:59Z",
   "transparency_level_lower_bound": 3,
   "components": [
@@ -21,7 +21,7 @@
         {
           "threat_identifier": "urn:codetonight:threat:repudiation:storage-custodian-rewrite",
           "mitigation_description": "The chain's Merkle root is committed to Bitcoin via OpenTimestamps, so even the record custodian cannot rewrite history undetectably. The production decision-chain root 0bba0792bf9f71caa815d0c42daf27f45baf07ef9749523be666f103a7f1bcb4 (501 records) is attested in Bitcoin blocks 956991 and 956992. The anchor manifest, the upgraded OpenTimestamps proof and the 501 RFC-6962 leaf hashes are published, so any party can re-derive the root from the leaf hashes and check the proof against a public block explorer with no trust in the authors.",
-          "transparency_level": 4,
+          "transparency_level": 3,
           "artifacts": [
             "https://github.com/CodeTonight-SA/grasp/tree/main/docs/tmif/anchor",
             "https://raw.githubusercontent.com/CodeTonight-SA/grasp/main/docs/tmif/anchor/decision-chain-501-2026-07-06.json.ots",
@@ -47,7 +47,7 @@
         {
           "threat_identifier": "urn:codetonight:threat:elevation-of-privilege:self-adjudication",
           "mitigation_description": "Verification and replay are pure, deterministic, standard-library re-derivations executable by any third party offline: re-hash, re-verify signatures, re-walk the Merkle path, re-derive the replay digest (byte-identical across machines and providers; no language model on the path). The claimant's own report is never the criterion (exogenous-anchor law). Two independent replays of an unchanged record set that disagree would falsify this claim.",
-          "transparency_level": 4,
+          "transparency_level": 3,
           "artifacts": [
             "https://github.com/codetonight-sa/grasp",
             "https://grasp-web-chi.vercel.app/try"

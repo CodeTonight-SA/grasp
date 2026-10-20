@@ -1,6 +1,6 @@
 # Production decision-chain anchor — the replay bundle
 
-This directory is the evidence behind the TMIF Claimant's level-4 claim that the
+This directory is the evidence behind the TMIF Claimant's anchor claim that the
 production decision-chain root is committed to Bitcoin. Everything needed to
 re-derive that commitment is here; nothing requires trusting GRASP or its authors,
 and the one step our code cannot vouch for (that the attested blocks are real
