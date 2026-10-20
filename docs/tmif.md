@@ -21,10 +21,11 @@ TMIF Evaluator can consume them without reading our docs.
 One divergence, stated openly: TMIF Claimants **self-assert** a
 transparency level. Under GRASP's exogenous-anchor rule a level is only
 worth what a third party can re-derive — the record survives independent
-refutation or it does not. GRASP therefore **under-claims by policy**:
-`transparency_level_lower_bound: 3` (source available, weakest-link
-honest), rising to level 4 only where the verification is a deterministic
-re-derivation any party can reproduce: the replay leg, and the
+refutation or it does not. GRASP therefore **under-claims by policy**: `transparency_level_lower_bound: 3`
+(source available, weakest-link honest), and since the re-issue of 2026-10-20 every
+claim sits at 3. Table 1 of `draft-laurie-tmif-02` defines level 4 as a reproducible
+build with SLSA provenance and has no row for a runtime record whose verification is
+a deterministic re-derivation any party can reproduce: the replay leg, and the
 Bitcoin-anchored production chain, whose bundle in
 [`tmif/anchor/`](tmif/anchor/README.md) lets anyone rebuild the root
 locally from published inputs and then confirm the attested blocks against
@@ -38,10 +39,13 @@ step is deliberately not something our code can vouch for.
 | [`tmif/grasp-tmif-claimant.json`](tmif/grasp-tmif-claimant.json) | The TMIF document (schema per `draft-laurie-tmif-02` §4.1; carries `issued_at` and `valid_until`) |
 | [`tmif/grasp-tmif-claimant.jws`](tmif/grasp-tmif-claimant.jws) | The same bytes, signed — RFC 7515 compact JWS, alg `EdDSA` (Ed25519, RFC 8037), the form `draft-laurie-tmif-02` §5.1.1 requires |
 | [`tmif/claimant-public-key.jwk.json`](tmif/claimant-public-key.jwk.json) | The verifying key (JWK), `kid: grasp-tmif-claimant-2026` |
-| [`tmif/anchor/`](tmif/anchor/README.md) | The replay bundle behind the level-4 anchor claim: manifest, upgraded OpenTimestamps proof (Bitcoin blocks 956991 and 956992), the 501 leaf hashes, and a standard-library `verify.py` |
+| [`tmif/anchor/`](tmif/anchor/README.md) | The replay bundle behind the anchor claim: manifest, upgraded OpenTimestamps proof (Bitcoin blocks 956991 and 956992), the 501 leaf hashes, and a standard-library `verify.py` |
 
-The document was re-issued on 2026-09-22 against `draft-laurie-tmif-02`. It
-supersedes the July 2026 issue; that earlier `.jws` still verifies against its
+The document was re-issued on 2026-10-20 against `draft-laurie-tmif-02`, with
+every claim at level 3. Table 1 of -02 defines level 4 as a reproducible build
+with SLSA provenance and has no row for runtime records, so the two claims that
+rest on a published, byte-identical re-derivation now sit at level 3 until it
+does. It supersedes the 2026-09-22 and July 2026 issues; that earlier `.jws` still verifies against its
 own payload, so treat any copy of it as superseded, not as forged.
 
 ## Verify the signature and the payload (no trust in us needed for that step)

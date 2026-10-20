@@ -495,7 +495,7 @@ verify <proof>.ots`) — not our code at all.
 
 GRASP's claims are also published as a signed
 [TMIF Claimant document](docs/tmif.md) —
-[`draft-laurie-tmif-01`](https://datatracker.ietf.org/doc/draft-laurie-tmif/),
+[`draft-laurie-tmif-02`](https://datatracker.ietf.org/doc/draft-laurie-tmif/),
 *A Standard for Claiming Transparency and Falsifiability*. To be precise
 about the relationship: GRASP is **not** an implementation of TMIF. GRASP
 is the engine that produces tamper-evident records; TMIF is a declaration
