@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/CodeTonight-SA/grasp/actions/workflows/ci.yml/badge.svg)](https://github.com/CodeTonight-SA/grasp/actions/workflows/ci.yml)
 
-**Try it in your browser:** <https://grasp-web-chi.vercel.app>
+**Try it in your browser:** <https://grasp.codetonight.co.za>
 
 **Reference implementation of cryptographic causation for AI systems.**
 

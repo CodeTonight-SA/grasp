@@ -84,7 +84,7 @@ any statement from CodeTonight on another channel that names that thumbprint
 binds the key to the organisation, and this repository alone does not.
 
 The claims inside point at artifacts you can check the same way — the public
-verifier at [grasp-web-chi.vercel.app/try](https://grasp-web-chi.vercel.app/try),
+verifier at [grasp.codetonight.co.za/try](https://grasp.codetonight.co.za/try),
 this source tree, and the production decision chain whose Merkle root is
 attested in Bitcoin blocks 956991 and 956992: [`tmif/anchor/`](tmif/anchor/README.md)
 holds the manifest, the OpenTimestamps proof and the 501 leaf hashes, and
