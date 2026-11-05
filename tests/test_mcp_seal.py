@@ -562,6 +562,36 @@ def test_connection_listed_header_is_stripped_from_forward(tmp_path):
     )
 
 
+def test_second_connection_header_line_still_strips_its_named_header(tmp_path):
+    """RFC 7230 S3.2.2: Connection is a comma-separated-list header, so a
+    client MAY split it across two header lines instead of one comma-joined
+    line -- both forms are the same field. ``headers.get("Connection")`` on
+    an ``email.message.Message`` (``self.headers``) returns only the FIRST
+    occurrence, not every value, so a client that sends ``Connection: close``
+    THEN a separate ``Connection: x-smuggle`` line can smuggle ``X-Smuggle``
+    past the strip -- the single-line case above never exercises this."""
+    home = tmp_path / "home"
+    _HeaderEchoUpstream.seen_headers = {}
+    body = json.dumps(_tool_call(1)).encode("utf-8")
+    with _running(_HeaderEchoUpstream, home) as port:
+        conn = http.client.HTTPConnection(HOST, port, timeout=5)
+        conn.putrequest("POST", "/mcp")
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", str(len(body)))
+        conn.putheader("Connection", "close")
+        conn.putheader("Connection", "x-smuggle")  # a SECOND Connection line
+        conn.putheader("X-Smuggle", "evil")
+        conn.endheaders(body)
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+    assert resp.status == 200
+    assert "X-Smuggle" not in _HeaderEchoUpstream.seen_headers, (
+        "a header named in a SECOND Connection line must be stripped too, "
+        "not forwarded to upstream just because it missed the first line"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Request body cap -- a declared Content-Length past the cap is refused
 # BEFORE a single byte is read from the socket (resource-exhaustion probe)

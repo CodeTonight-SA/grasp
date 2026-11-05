@@ -504,6 +504,23 @@ def _connection_listed_headers(value: str | None) -> frozenset[str]:
     return frozenset(tok.strip().lower() for tok in value.split(",") if tok.strip())
 
 
+def _connection_field_value(headers) -> str | None:
+    """Every ``Connection`` value the client sent, RFC 7230 S3.2.2-joined.
+
+    ``Connection`` is defined as a comma-separated-list header, so a client
+    MAY legally split it across more than one header line instead of joining
+    it with commas on one line -- both forms are the same field, and a
+    recipient must treat them identically. ``headers.get("Connection")`` on
+    an ``email.message.Message`` (what ``self.headers`` is) returns only the
+    FIRST such line, silently dropping the rest -- which lets a client
+    smuggle an arbitrary header past the hop-by-hop strip by naming it in a
+    SECOND ``Connection`` line the single-value read never sees.
+    ``get_all`` returns every occurrence; joining with ``", "`` reproduces
+    the one-line form ``_connection_listed_headers`` already parses."""
+    values = headers.get_all("Connection")
+    return ", ".join(values) if values else None
+
+
 def _forward_headers(headers) -> list[tuple[str, str]]:
     """Every header the client sent, minus HOP_BY_HOP and anything the
     client's own Connection header lists -- as a LIST of pairs, not a dict,
@@ -513,7 +530,7 @@ def _forward_headers(headers) -> list[tuple[str, str]]:
     forwards headers it recognises breaks on the first header it does not --
     Authorization/Mcp-Session-Id/Accept all pass through simply because they
     are not hop-by-hop, same as anything else."""
-    drop = HOP_BY_HOP | _connection_listed_headers(headers.get("Connection"))
+    drop = HOP_BY_HOP | _connection_listed_headers(_connection_field_value(headers))
     return [(name, value) for name, value in headers.items() if name.lower() not in drop]
 
 
