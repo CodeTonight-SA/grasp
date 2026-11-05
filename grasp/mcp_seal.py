@@ -452,6 +452,18 @@ def _is_event_stream(resp: http.client.HTTPResponse) -> bool:
     return ctype == "text/event-stream"
 
 
+#: Status codes whose response MUST NOT carry Content-Length (RFC 9110
+#: SS8.6): 1xx, 204 No Content, 304 Not Modified. ``resp.read()`` already
+#: yields ``b""`` for these (http.client special-cases them), so the data
+#: this proxy would report a length for is always 0 anyway -- the header
+#: is pure surplus a strict client is entitled to reject.
+_NO_CONTENT_LENGTH_STATUSES = frozenset({204, 304})
+
+
+def _forbids_content_length(status: int) -> bool:
+    return status in _NO_CONTENT_LENGTH_STATUSES or 100 <= status < 200
+
+
 # ---------------------------------------------------------------------------
 # The proxy handler
 # ---------------------------------------------------------------------------
@@ -607,7 +619,8 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
         data = resp.read()
         self.send_response(resp.status)
         self._copy_response_headers(resp)
-        self.send_header("Content-Length", str(len(data)))
+        if not _forbids_content_length(resp.status):
+            self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
         if pending:

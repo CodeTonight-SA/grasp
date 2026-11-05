@@ -646,6 +646,35 @@ def test_sse_chunks_relayed_before_stream_ends(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# A status that MUST NOT carry Content-Length (RFC 9110 SS8.6)
+# ---------------------------------------------------------------------------
+
+class _NoContentUpstream(http.server.BaseHTTPRequestHandler):
+    """204 No Content, with no body and no Content-Length of its own --
+    the RFC-compliant shape this proxy must not add a header to."""
+
+    def do_POST(self):  # noqa: N802
+        length = int(self.headers.get("Content-Length") or 0)
+        self.rfile.read(length) if length else b""
+        self.send_response(204)
+        self.end_headers()
+
+    def log_message(self, *a):  # noqa: D102
+        pass
+
+
+def test_204_response_carries_no_content_length(tmp_path):
+    home = tmp_path / "home"
+    with _running(_NoContentUpstream, home) as port:
+        status, headers, data = _post(port, _tool_call(1))
+    assert status == 204
+    assert data == b""
+    assert "Content-Length" not in headers, (
+        "RFC 9110 SS8.6: a 204 response MUST NOT carry Content-Length"
+    )
+
+
+# ---------------------------------------------------------------------------
 # small shared helper
 # ---------------------------------------------------------------------------
 
