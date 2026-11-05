@@ -80,8 +80,15 @@ mcpServers:
 ```
 
 ```bash
-grasp-mcp-seal serve --upstream http://real-upstream:8080 --listen 0.0.0.0:8091
+grasp-mcp-seal serve --upstream http://real-upstream:8080 \
+    --listen 0.0.0.0:8091 --allow-remote-bind
 ```
+
+The sidecar runs in its own container here, reached over the compose network
+by hostname (`seal`, above) rather than loopback -- that is a non-loopback
+bind by this proxy's own definition, so `--allow-remote-bind` is required
+even though the compose network itself, not the public internet, is what
+actually reaches port 8091.
 
 **Whether `mcp-proxy` preserves the client's `Host` header through to the
 seal is unverified until first contact** -- nothing in this deployment may

@@ -1030,6 +1030,32 @@ def test_oversized_buffered_response_is_refused_before_any_read(tmp_path, monkey
 
 
 # ---------------------------------------------------------------------------
+# The doc's own examples must not refuse against this proxy's own defaults
+# ---------------------------------------------------------------------------
+
+def _bash_block_lines(doc_text: str) -> list[str]:
+    """Every line inside a fenced ```bash block, flattened across all blocks."""
+    blocks = doc_text.split("```bash")[1:]
+    bodies = [block.split("```", 1)[0] for block in blocks]
+    return [line for body in bodies for line in body.splitlines()]
+
+
+def test_doc_non_loopback_serve_example_includes_allow_remote_bind():
+    """``docs/install/mcp-seal.md``'s "behind mcp-proxy" example binds
+    ``0.0.0.0``, which ``_cmd_serve`` refuses without ``--allow-remote-bind``
+    -- a reader copying the example exactly as shown hits a refusal the doc
+    never warns them about."""
+    doc = Path(__file__).resolve().parent.parent / "docs" / "install" / "mcp-seal.md"
+    lines = _bash_block_lines(doc.read_text(encoding="utf-8"))
+    serve_lines = [ln for ln in lines if "grasp-mcp-seal serve" in ln and "--listen" in ln]
+    for line in serve_lines:
+        host = line.split("--listen", 1)[1].strip().split()[0].split(":")[0]
+        if host not in ("127.0.0.1", "localhost", ""):
+            assert "--allow-remote-bind" in line, \
+                f"non-loopback --listen example is missing --allow-remote-bind: {line!r}"
+
+
+# ---------------------------------------------------------------------------
 # small shared helper
 # ---------------------------------------------------------------------------
 
