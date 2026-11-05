@@ -6,7 +6,7 @@ Spins up a trivial stub Streamable HTTP MCP upstream (instant JSON reply, no
 artificial delay) and issues N tools/call requests two ways: DIRECT (straight
 to the stub) and PROXIED (through grasp.mcp_seal, pointed at the same stub).
 Reports the p50/p95 latency of each series, and the delta the proxy adds on
-top -- the measurement hypothesis H909 asks for. Stdlib only, loopback only.
+top -- the latency measurement for two signed records per call. Stdlib only, loopback only.
 
 Run::
 
