@@ -769,7 +769,8 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
                 return
         try:
             conn, resp = _forward(cfg, method, self.path, _forward_headers(self.headers), body)
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
+            self._close_out_calls(cfg, list(pending.values()), {"upstream_failed": type(exc).__name__})
             self._write_json(502, _refusal_body(messages, was_batch, f"upstream unreachable: {exc}"))
             return
         try:
@@ -857,7 +858,7 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
             sealed = self._seal_one_intent(cfg, message, session_digest)
             if sealed is None and cfg.on_seal_failure == "refuse" and \
                     message.get("method") == "tools/call":
-                self._abandon_sealed_intents(cfg, sealed_so_far)
+                self._close_out_calls(cfg, sealed_so_far, {"abandoned": "batch refused before forwarding"})
                 return {}, "refusing -- intent could not be sealed"
             if sealed is not None:
                 sealed_so_far.append(sealed)
@@ -865,21 +866,20 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
                     pending[message["id"]] = sealed
         return pending, None
 
-    def _abandon_sealed_intents(self, cfg: ProxyConfig, sealed: list[_PendingCall]) -> None:
-        """Close out every intent already durably sealed earlier in THIS
-        batch, right before refusing it for a LATER message's seal failure.
-        Without this, an earlier intent sits in the ledger with no outcome
-        and no way to ever get one (the batch it belonged to was never
-        forwarded) -- indistinguishable from a call that really reached the
-        upstream but whose outcome this proxy merely failed to observe, when
-        the true state is that it never left the proxy at all. An id-less
-        call is closed out here too, even though it holds no slot in the
-        pending map."""
-        for call in sealed:
+    def _close_out_calls(self, cfg: ProxyConfig, calls: list[_PendingCall], payload: dict) -> None:
+        """Seal an error outcome for calls this proxy already knows the fate of.
+
+        Two callers. A batch refused before forwarding never left the proxy.
+        A forward that failed may or may not have reached the upstream, so
+        its payload names the failure and claims nothing more. Without this
+        each intent sits in the ledger looking like a call whose answer the
+        proxy merely failed to observe. An id-less call in a refused batch is
+        closed out too, even though it holds no slot in the pending map."""
+        for call in calls:
             try:
                 cfg.chain.seal_outcome(
                     intent=call.intent, tool=call.tool,
-                    payload={"abandoned": "batch refused before forwarding"}, is_error=True,
+                    payload=payload, is_error=True,
                     duration_s=time.monotonic() - call.started,
                     session_digest=call.session_digest, jsonrpc_id=call.jsonrpc_id,
                 )
@@ -927,6 +927,12 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
             # instead of buffering an unbounded upstream reply.
             message = (f"upstream response of over {exc.read} bytes exceeds the "
                        f"{exc.cap}-byte cap (GRASP_MCP_SEAL_MAX_RESPONSE_BYTES)")
+            self._write_json(502, json.dumps(_jsonrpc_error_obj(None, message)).encode("utf-8"))
+            return
+        except (OSError, http.client.HTTPException) as exc:
+            # The upstream answered and then broke, so the call's outcome is
+            # unknown. No outcome is invented, and the intent stays unsettled.
+            message = f"upstream reply broke off: {type(exc).__name__}"
             self._write_json(502, json.dumps(_jsonrpc_error_obj(None, message)).encode("utf-8"))
             return
         self.send_response(resp.status)

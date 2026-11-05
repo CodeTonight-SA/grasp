@@ -555,7 +555,7 @@ def test_error_result_is_sealed_as_is_error(tmp_path):
 # Upstream down
 # ---------------------------------------------------------------------------
 
-def test_upstream_down_refuses_cleanly_and_intent_stays_unsettled(tmp_path):
+def test_upstream_down_refuses_cleanly_and_records_the_failure(tmp_path):
     home = tmp_path / "home"
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     probe.bind((HOST, 0))
@@ -573,8 +573,8 @@ def test_upstream_down_refuses_cleanly_and_intent_stays_unsettled(tmp_path):
     assert status == 502
     assert json.loads(data)["error"]["code"] == -32000
     out = m.verify_seal_chain(home)
-    assert out["records"] == 1  # the intent was sealed before the failed forward
-    assert len(out["unsettled"]) == 1
+    assert out["records"] == 2  # the intent, then an outcome naming the failed forward
+    assert out["unsettled"] == []
     assert out["chain_verdict"] == "verified"
 
 
