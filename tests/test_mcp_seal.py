@@ -396,6 +396,40 @@ def test_notification_with_no_id_does_not_crash_and_stays_unsettled(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# A JSON-RPC id that is not a string/number/null -- not a dict key
+# ---------------------------------------------------------------------------
+
+def test_non_scalar_id_is_refused_not_a_crash(tmp_path):
+    """JSON-RPC ids are string, number, or null -- never an array or object.
+    ``_seal_intents`` tracks a pending call by ``pending[message["id"]]``,
+    which raises ``TypeError: unhashable type`` for a list/dict id. That
+    propagates out of the handler thread uncaught: the client sees the
+    connection drop with no JSON-RPC error, and the call is never sealed
+    either way. A refusal here is HTTP 200 carrying a JSON-RPC error object
+    -- the same convention ``test_refuse_on_seal_failure_never_reaches_upstream``
+    already exercises for a different refusal cause."""
+    home = tmp_path / "home"
+    _CallCountingUpstream.calls = 0
+    body = json.dumps(_tool_call([], arguments={"x": 1})).encode("utf-8")
+    with _running(_CallCountingUpstream, home) as port:
+        conn = http.client.HTTPConnection(HOST, port, timeout=5)
+        conn.request("POST", "/mcp", body=body, headers={"Content-Type": "application/json"})
+        try:
+            resp = conn.getresponse()
+            status = resp.status
+            data = resp.read()
+        except http.client.RemoteDisconnected:
+            status, data = None, b""
+        conn.close()
+    assert status is not None, "a non-scalar id must be refused cleanly, not drop the connection"
+    assert status == 200
+    assert "error" in json.loads(data), f"expected a JSON-RPC error object, got {data!r}"
+    assert _CallCountingUpstream.calls == 0, "an unrepresentable call must never reach upstream"
+    out = m.verify_seal_chain(home)
+    assert out["records"] == 0, "nothing can be honestly paired for an id that cannot be tracked"
+
+
+# ---------------------------------------------------------------------------
 # A batch response framed as a single SSE event carrying a JSON array
 # ---------------------------------------------------------------------------
 

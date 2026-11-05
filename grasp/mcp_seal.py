@@ -370,6 +370,16 @@ def _as_messages(parsed: Any) -> list[dict]:
     return []
 
 
+def _is_hashable(value: Any) -> bool:
+    """True iff ``value`` can be a dict key -- a JSON-decoded list or dict
+    (illegal as a JSON-RPC id, but syntactically valid JSON) is not."""
+    try:
+        hash(value)
+    except TypeError:
+        return False
+    return True
+
+
 def _tool_call_args(message: dict) -> tuple[str, Any]:
     params = message.get("params") or {}
     return str(params.get("name", "")), params.get("arguments", {})
@@ -621,7 +631,12 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
             return False, []
         try:
             parsed = json.loads(body)
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            # json.loads on bytes auto-detects the text encoding before
+            # parsing; bytes that are not valid UTF-8 (or UTF-16/32) raise
+            # UnicodeDecodeError there -- a SIBLING of JSONDecodeError under
+            # ValueError, not a subclass of it, so catching only the latter
+            # let this shape escape uncaught and crash the handler thread.
             raise _UnparsableJSONRPCBody(str(exc)) from None
         return isinstance(parsed, list), _as_messages(parsed)
 
