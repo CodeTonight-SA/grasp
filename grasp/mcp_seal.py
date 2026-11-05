@@ -851,26 +851,31 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
         if invalid is not None:
             return {}, invalid
         pending: dict[Any, _PendingCall] = {}
+        sealed_so_far: list[_PendingCall] = []
         session_digest = _session_digest(self.headers)
         for message in messages:
             sealed = self._seal_one_intent(cfg, message, session_digest)
             if sealed is None and cfg.on_seal_failure == "refuse" and \
                     message.get("method") == "tools/call":
-                self._abandon_sealed_intents(cfg, pending)
+                self._abandon_sealed_intents(cfg, sealed_so_far)
                 return {}, "refusing -- intent could not be sealed"
-            if sealed is not None and "id" in message:
-                pending[message["id"]] = sealed
+            if sealed is not None:
+                sealed_so_far.append(sealed)
+                if "id" in message:
+                    pending[message["id"]] = sealed
         return pending, None
 
-    def _abandon_sealed_intents(self, cfg: ProxyConfig, pending: dict[Any, _PendingCall]) -> None:
+    def _abandon_sealed_intents(self, cfg: ProxyConfig, sealed: list[_PendingCall]) -> None:
         """Close out every intent already durably sealed earlier in THIS
         batch, right before refusing it for a LATER message's seal failure.
         Without this, an earlier intent sits in the ledger with no outcome
         and no way to ever get one (the batch it belonged to was never
         forwarded) -- indistinguishable from a call that really reached the
         upstream but whose outcome this proxy merely failed to observe, when
-        the true state is that it never left the proxy at all."""
-        for call in pending.values():
+        the true state is that it never left the proxy at all. An id-less
+        call is closed out here too, even though it holds no slot in the
+        pending map."""
+        for call in sealed:
             try:
                 cfg.chain.seal_outcome(
                     intent=call.intent, tool=call.tool,
