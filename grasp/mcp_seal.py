@@ -915,6 +915,61 @@ def verify_seal_chain(home: Path) -> dict:
     return out
 
 
+def _flip_hex_char(value: str) -> str:
+    """A string with its last character changed -- works for any non-empty
+    value, hex or not, as long as it has a last character to differ from."""
+    return value[:-1] + ("0" if value[-1] != "0" else "1")
+
+
+def _corrupt_one_leaf(path: Path) -> bool:
+    """Flips one character of one record's own ``audit.signature`` in the
+    COPY at ``path`` -- the chain's own tamper-evidence target, so the
+    corruption is never a no-op regardless of what shape ``decision`` is in.
+    Targets the LAST record (a short chain still has one to corrupt).
+    Returns False when the file has no signature to corrupt."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        line = lines[i].strip()
+        if not line:
+            continue
+        entry = json.loads(line)
+        audit = entry.get("audit")
+        signature = audit.get("signature") if isinstance(audit, dict) else None
+        if not isinstance(signature, str) or not signature:
+            continue
+        audit["signature"] = _flip_hex_char(signature)
+        lines[i] = _canonical_json(entry)
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return True
+    return False
+
+
+def drill(home: Path) -> dict:
+    """Copies the chain to a temp folder, corrupts one leaf in the COPY, and
+    verifies the copy -- the real chain at ``home`` is never opened for
+    writing and is untouched. Ships the attack beside the claim: ``refused``
+    is True when the tamper was correctly caught, matching ``verify``'s own
+    offline check."""
+    home = Path(home)
+    ledger = _ledger_path(home)
+    if not ledger.exists():
+        return {"refused": False, "message": f"no chain at {ledger}; run `serve` first", "verify": None}
+    import shutil
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="grasp-mcp-seal-drill-") as tmp:
+        copy_ledger = _ledger_path(Path(tmp))
+        copy_ledger.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ledger, copy_ledger)
+        if not _corrupt_one_leaf(copy_ledger):
+            return {"refused": False, "message": "the chain has no record to corrupt", "verify": None}
+        result = verify_seal_chain(copy_ledger.parent)
+        result.pop("_by_id", None)
+    refused = not result["ok"]
+    message = ("this record no longer seals" if refused else
+               "the corrupted copy still verified -- the drill did not break it")
+    return {"refused": refused, "message": message, "verify": result}
+
+
 def _unsettled_intents(chain: list[PrecogIDR]) -> list[str]:
     settled = {idr.inputs.get("intent_id") for idr in chain if idr.kind == "mcp.tool.outcome"}
     return [idr.id for idr in chain if idr.kind == "mcp.tool.intent" and idr.id not in settled]
@@ -1025,6 +1080,25 @@ def _add_verify_command(sub) -> None:
     verify.set_defaults(func=_cmd_verify)
 
 
+def _cmd_drill(args: argparse.Namespace) -> int:
+    home = Path(args.home) if args.home else default_home()
+    result = drill(home)
+    print(result["message"])
+    if args.json and result["verify"] is not None:
+        print(json.dumps(result["verify"]))
+    return 0 if result["refused"] else 1
+
+
+def _add_drill_command(sub) -> None:
+    drill_p = sub.add_parser(
+        "drill",
+        help="copy the chain, corrupt one leaf in the copy, and show verify refuse it; the real chain is untouched",
+    )
+    drill_p.add_argument("--home", help="state dir (default: $GRASP_HOME/mcp-seal)")
+    drill_p.add_argument("--json", action="store_true", help="also print the corrupted copy's verify report")
+    drill_p.set_defaults(func=_cmd_drill)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="grasp-mcp-seal",
@@ -1034,6 +1108,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     _add_serve_command(sub)
     _add_verify_command(sub)
+    _add_drill_command(sub)
     return parser
 
 

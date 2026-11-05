@@ -1030,6 +1030,30 @@ def test_oversized_buffered_response_is_refused_before_any_read(tmp_path, monkey
 
 
 # ---------------------------------------------------------------------------
+# The seal-breaking drill -- ships the attack beside the claim
+# ---------------------------------------------------------------------------
+
+def test_drill_shows_the_corrupted_copy_refuse_and_never_touches_the_real_chain(tmp_path):
+    home = tmp_path / "home"
+    with _running(_CallCountingUpstream, home) as port:
+        _post(port, _tool_call(1))
+    before = (home / "seal.jsonl").read_bytes()
+    result = m.drill(home)
+    after = (home / "seal.jsonl").read_bytes()
+    assert after == before, "the real chain must never be touched by the drill"
+    assert result["refused"] is True
+    assert result["message"] == "this record no longer seals"
+    assert result["verify"]["ok"] is False
+
+
+def test_drill_with_no_chain_says_so_and_does_not_crash(tmp_path):
+    result = m.drill(tmp_path / "never-served")
+    assert result["refused"] is False
+    assert "no chain at" in result["message"]
+    assert result["verify"] is None
+
+
+# ---------------------------------------------------------------------------
 # The doc's own examples must not refuse against this proxy's own defaults
 # ---------------------------------------------------------------------------
 
