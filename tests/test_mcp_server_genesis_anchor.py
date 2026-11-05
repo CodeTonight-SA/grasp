@@ -101,6 +101,9 @@ def test_verify_uses_the_default_genesis_for_a_legacy_root(monkeypatch):
     anchored, forest = mcp_server._verify_decision_chain([_fake_idr(None)], out)
     assert forest is not None
     assert "decision_chain_error" not in out
+    # "a forest" is not enough -- it must be rooted at the REAL default
+    # placeholder, not just at whatever _genesis_anchor() happened to return.
+    assert forest.roots == ("human:mcp-operator",)
 
 
 def test_verify_reports_broken_when_override_is_inadmissible_for_a_legacy_root(monkeypatch):
