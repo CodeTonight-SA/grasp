@@ -831,7 +831,16 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
     def _seal_outcomes_from_bytes(self, data: bytes, pending: dict, cfg: ProxyConfig) -> None:
         try:
             parsed = json.loads(data)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # Same sibling-of-JSONDecodeError shape _parse_body already learned
+            # about: json.loads on bytes auto-detects the encoding before
+            # parsing, and bytes that are not valid UTF-8 (or UTF-16/32) raise
+            # UnicodeDecodeError there, uncaught by `except json.JSONDecodeError`
+            # alone. The reply has already reached the client by this point
+            # (this call only seals the outcome record); left uncaught, this
+            # crashed the handler thread instead of simply leaving the
+            # outcome unsealed, same as any other response this proxy cannot
+            # parse.
             return
         for message in _as_messages(parsed):
             self._seal_one_outcome(message, pending, cfg)

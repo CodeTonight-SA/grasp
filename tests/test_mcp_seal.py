@@ -284,6 +284,24 @@ class _HeaderEchoUpstream(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class _NonUtf8ReplyUpstream(http.server.BaseHTTPRequestHandler):
+    """Every POST gets a 200 whose body is bytes that are not valid UTF-8 --
+    models an upstream MCP server whose reply is not well-formed text."""
+
+    def do_POST(self):  # noqa: N802
+        length = int(self.headers.get("Content-Length") or 0)
+        self.rfile.read(length) if length else b""
+        out = b"\xff\xfe not valid utf-8 at all"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):  # noqa: D102
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Harness: a real upstream + a real proxy, both on loopback, daemon threads
 # ---------------------------------------------------------------------------
@@ -868,6 +886,30 @@ def test_invalid_utf8_body_is_refused_not_a_crash(tmp_path):
     assert _LenientUpstream.calls == 0, "an undecodable body must never reach upstream"
     out = m.verify_seal_chain(home)
     assert out["records"] == 0
+
+
+def test_invalid_utf8_upstream_reply_does_not_crash_the_outcome_seal(tmp_path, capsys):
+    """``_seal_outcomes_from_bytes`` runs ``json.loads`` on the upstream's raw
+    response bytes -- the exact same auto-detect-then-decode shape that
+    ``_parse_body`` already learned can raise ``UnicodeDecodeError`` for bytes
+    that are not valid UTF-8 (a ``ValueError`` SIBLING of
+    ``json.JSONDecodeError``, not a subclass of it, so ``except
+    json.JSONDecodeError`` does not catch it). That fix was never mirrored on
+    the outcome side. The proxy has already written the reply to the client
+    by the time this runs, so the crash is invisible to the caller -- it
+    surfaces only as an uncaught exception in the server's own request-
+    handling thread, which ``_running``'s ``proxy.shutdown()`` blocks until
+    finished, so the exception has already been reported (or not) by the
+    time this checks stderr."""
+    home = tmp_path / "home"
+    with _running(_NonUtf8ReplyUpstream, home) as port:
+        status, _, _ = _post(port, _tool_call(1))
+    assert status == 200, "the garbage reply is written to the client before any seal is attempted"
+    err = capsys.readouterr().err
+    assert "UnicodeDecodeError" not in err, (
+        f"an upstream reply that is not valid UTF-8 crashed the handler thread "
+        f"while sealing the outcome instead of being refused cleanly:\n{err}"
+    )
 
 
 # ---------------------------------------------------------------------------
