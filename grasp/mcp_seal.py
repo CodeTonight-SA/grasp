@@ -651,12 +651,17 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
             self._seal_one_outcome(message, pending, cfg)
 
     def _maybe_seal_outcome(self, payload: str, pending: dict, cfg: ProxyConfig) -> None:
+        """One SSE event's ``data:`` payload -- a single JSON-RPC response
+        object, OR (a legal batch reply) a JSON array of several. Reuses
+        ``_as_messages`` so both shapes seal exactly like the buffered-JSON
+        path does; a dict-only check here would silently leave every
+        outcome in an array-framed SSE batch reply unsettled."""
         try:
             message = json.loads(payload)
         except json.JSONDecodeError:
             return
-        if isinstance(message, dict):
-            self._seal_one_outcome(message, pending, cfg)
+        for one in _as_messages(message):
+            self._seal_one_outcome(one, pending, cfg)
 
     def _seal_one_outcome(self, message: dict, pending: dict, cfg: ProxyConfig) -> None:
         call = pending.pop(message.get("id"), None)

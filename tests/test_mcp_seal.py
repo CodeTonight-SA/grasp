@@ -171,6 +171,28 @@ class _CallCountingUpstream(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class _SSEBatchArrayUpstream(http.server.BaseHTTPRequestHandler):
+    """A batch of tools/call replied to with ONE SSE event whose ``data:``
+    is a JSON ARRAY of every response -- a legal JSON-RPC batch reply, just
+    framed as a single SSE payload instead of one event per response."""
+
+    def do_POST(self):  # noqa: N802
+        length = int(self.headers.get("Content-Length") or 0)
+        messages = json.loads(self.rfile.read(length)) if length else []
+        replies = [
+            {"jsonrpc": "2.0", "id": msg["id"], "result": {"content": [], "isError": False}}
+            for msg in messages if "id" in msg
+        ]
+        payload = json.dumps(replies)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+
+    def log_message(self, *a):  # noqa: D102
+        pass
+
+
 class _DuplicateHeaderUpstream(http.server.BaseHTTPRequestHandler):
     """Records every value of a repeated request header it actually received
     -- the probe for "no header value is silently dropped"."""
@@ -303,6 +325,26 @@ def test_notification_with_no_id_does_not_crash_and_stays_unsettled(tmp_path):
     # bare notification is not a tools/call and seals nothing.
     assert out["records"] == 1
     assert len(out["unsettled"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# A batch response framed as a single SSE event carrying a JSON array
+# ---------------------------------------------------------------------------
+
+def test_sse_batch_response_as_one_array_event_seals_every_outcome(tmp_path):
+    """The module docstring promises outcomes are matched 'in a JSON body
+    or SSE data: frames', for batches included. One SSE event can legally
+    carry the whole batch reply as a JSON array -- that must seal exactly
+    like the buffered-JSON-array case does, not leave every call unsettled."""
+    home = tmp_path / "home"
+    batch = [_tool_call(1, "toolA"), _tool_call(2, "toolB")]
+    with _running(_SSEBatchArrayUpstream, home) as port:
+        status, headers, data = _post(port, batch)
+    assert status == 200
+    assert headers.get("Content-Type") == "text/event-stream"
+    out = m.verify_seal_chain(home)
+    assert out["records"] == 4  # 2 intents + 2 outcomes
+    assert out["unsettled"] == [], "both outcomes must be sealed from the single array event"
 
 
 # ---------------------------------------------------------------------------
