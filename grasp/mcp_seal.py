@@ -101,6 +101,19 @@ class _BodyTooLarge(Exception):
         self.cap = cap
 
 
+class _ChunkedBodyNotSupported(Exception):
+    """The client declared ``Transfer-Encoding`` -- this proxy does not
+    decode a transfer-coded request body. Treating ``Content-Length`` as
+    absent-means-empty (as ``_read_body`` otherwise does for GET/DELETE)
+    would be wrong here: there IS a body, just not declared the way this
+    proxy reads it, so a silent empty read forwards nothing, seals
+    nothing, and leaves the real bytes unread on the socket -- which the
+    next request on the same persistent connection then misreads as its
+    own request line (an HTTP request-smuggling / desync shape). Raised
+    BEFORE any byte is read, so the caller can refuse and force the
+    connection closed instead."""
+
+
 def _max_body_bytes() -> int:
     raw = os.environ.get("GRASP_MCP_SEAL_MAX_BODY_BYTES", "").strip()
     if not raw:
@@ -471,6 +484,8 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
     # -- request intake ------------------------------------------------
 
     def _read_body(self) -> bytes:
+        if self.headers.get("Transfer-Encoding"):
+            raise _ChunkedBodyNotSupported()
         length = self.headers.get("Content-Length")
         if not length:
             return b""
@@ -507,6 +522,15 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
             message = (f"request body of {exc.declared} bytes exceeds the "
                        f"{exc.cap}-byte cap (GRASP_MCP_SEAL_MAX_BODY_BYTES)")
             self._write_json(413, json.dumps(_jsonrpc_error_obj(None, message)).encode("utf-8"))
+            return
+        except _ChunkedBodyNotSupported:
+            # Same discipline as the cap above: nothing was read from the
+            # socket, so force the connection closed rather than leave a
+            # transfer-coded body this proxy cannot decode sitting unread.
+            self.close_connection = True
+            message = ("this proxy requires Content-Length and does not decode "
+                       "Transfer-Encoding; send the request with Content-Length set")
+            self._write_json(411, json.dumps(_jsonrpc_error_obj(None, message)).encode("utf-8"))
             return
         was_batch, messages = self._parse_body(method, body)
         pending: dict[Any, _PendingCall] = {}

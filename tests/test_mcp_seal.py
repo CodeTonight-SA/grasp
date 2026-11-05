@@ -454,6 +454,47 @@ def test_oversized_declared_body_is_refused_before_any_read(tmp_path, monkeypatc
 
 
 # ---------------------------------------------------------------------------
+# Transfer-Encoding (chunked): refused cleanly, never silently dropped
+# ---------------------------------------------------------------------------
+
+def _send_chunked_post(port: int, body: bytes) -> bytes:
+    """A raw socket, hand-framed ``Transfer-Encoding: chunked`` POST --
+    ``http.client`` has no public one-shot way to declare this header on a
+    single bytes body, and the whole point of the probe is the RAW bytes a
+    real chunked-capable client would put on the wire."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(5)
+    sock.connect((HOST, port))
+    head = (
+        f"POST /mcp HTTP/1.1\r\n"
+        f"Host: {HOST}:{port}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Transfer-Encoding: chunked\r\n"
+        f"\r\n"
+    ).encode("utf-8")
+    chunked = f"{len(body):x}\r\n".encode("ascii") + body + b"\r\n0\r\n\r\n"
+    sock.sendall(head + chunked)
+    reply = sock.recv(65536)
+    sock.close()
+    return reply
+
+
+def test_chunked_request_body_is_refused_not_silently_dropped(tmp_path):
+    """A client that sends a chunked request body (no Content-Length) must
+    get a clean refusal -- not a 200 OK built from a silently-empty body
+    that was never sealed and never reached the upstream."""
+    home = tmp_path / "home"
+    _CallCountingUpstream.calls = 0
+    with _running(_CallCountingUpstream, home) as port:
+        reply = _send_chunked_post(port, json.dumps(_tool_call(1)).encode("utf-8"))
+    status_line = reply.split(b"\r\n", 1)[0]
+    assert b"411" in status_line, f"expected 411 Length Required, got {status_line!r}"
+    assert _CallCountingUpstream.calls == 0, "the undecoded chunked call must never reach upstream"
+    out = m.verify_seal_chain(home)
+    assert out["records"] == 0, "nothing can be honestly sealed for a body this proxy never read"
+
+
+# ---------------------------------------------------------------------------
 # No plaintext in the chain; openings carry it, mode 0600
 # ---------------------------------------------------------------------------
 
