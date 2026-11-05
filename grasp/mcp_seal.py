@@ -181,6 +181,40 @@ def _max_body_bytes() -> int:
     return value if value >= 0 else _DEFAULT_MAX_BODY_BYTES
 
 
+def _invalid_byte_env_warning(name: str, raw: str, default: int) -> str | None:
+    """None if ``raw`` (already known non-empty) parses as a valid
+    non-negative int; otherwise the line ``_cmd_serve`` prints to stderr once
+    at startup. ``_max_body_bytes``/``_max_response_bytes`` are read on EVERY
+    request, unlike ``GRASP_MCP_SEAL_GENESIS_ANCHOR`` (read once, at
+    construction) -- so making the per-request reader itself raise on a typo
+    would crash every request for the life of the misconfigured process.
+    Validating once at startup surfaces the typo loudly, without that cost,
+    and without changing the readers' existing safe-default fallback."""
+    try:
+        value = int(raw)
+    except ValueError:
+        return f"{name}={raw!r} is not an integer; using the default {default} instead"
+    if value < 0:
+        return f"{name}={value} is negative; using the default {default} instead"
+    return None
+
+
+def _byte_env_startup_warnings() -> list[str]:
+    """Called once by ``_cmd_serve`` before the server starts accepting
+    requests -- the startup-time counterpart to ``_max_body_bytes``'s and
+    ``_max_response_bytes``'s per-request, fail-safe-silent reads."""
+    warnings: list[str] = []
+    for name, default in (("GRASP_MCP_SEAL_MAX_BODY_BYTES", _DEFAULT_MAX_BODY_BYTES),
+                           ("GRASP_MCP_SEAL_MAX_RESPONSE_BYTES", _DEFAULT_MAX_RESPONSE_BYTES)):
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            continue
+        warning = _invalid_byte_env_warning(name, raw, default)
+        if warning:
+            warnings.append(warning)
+    return warnings
+
+
 #: Cap on a BUFFERED (non-SSE) upstream response this proxy will hold in
 #: memory before relaying it -- the response-side twin of
 #: GRASP_MCP_SEAL_MAX_BODY_BYTES above. A buffered reply must be read whole
@@ -1066,6 +1100,8 @@ def _open_record(home: Path, record_id: str, by_id: dict[str, PrecogIDR]) -> dic
 
 def _cmd_serve(args: argparse.Namespace) -> int:
     home = Path(args.home) if args.home else default_home()
+    for warning in _byte_env_startup_warnings():
+        print(f"grasp-mcp-seal: {warning}", file=sys.stderr)
     host, _, port_s = args.listen.rpartition(":")
     if not host:
         print("grasp-mcp-seal: --listen must be HOST:PORT", file=sys.stderr)

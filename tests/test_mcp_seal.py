@@ -1153,6 +1153,47 @@ def test_genesis_anchor_override_rejects_an_inadmissible_value(monkeypatch):
     assert raised, "an inadmissible override must be rejected, not silently accepted"
 
 
+def test_invalid_byte_env_warning_accepts_a_valid_value():
+    assert m._invalid_byte_env_warning("GRASP_MCP_SEAL_MAX_BODY_BYTES", "1048576", 10) is None
+
+
+def test_invalid_byte_env_warning_flags_a_non_integer():
+    warning = m._invalid_byte_env_warning("GRASP_MCP_SEAL_MAX_BODY_BYTES", "10MiB", 10)
+    assert warning is not None
+    assert "GRASP_MCP_SEAL_MAX_BODY_BYTES" in warning
+    assert "10MiB" in warning
+
+
+def test_invalid_byte_env_warning_flags_a_negative_value():
+    warning = m._invalid_byte_env_warning("GRASP_MCP_SEAL_MAX_RESPONSE_BYTES", "-1", 10)
+    assert warning is not None
+    assert "GRASP_MCP_SEAL_MAX_RESPONSE_BYTES" in warning
+
+
+def test_byte_env_startup_warnings_is_silent_when_both_are_unset_or_valid(monkeypatch):
+    monkeypatch.delenv("GRASP_MCP_SEAL_MAX_BODY_BYTES", raising=False)
+    monkeypatch.setenv("GRASP_MCP_SEAL_MAX_RESPONSE_BYTES", "2048")
+    assert m._byte_env_startup_warnings() == []
+
+
+def test_byte_env_startup_warnings_surfaces_a_typo_once_at_startup(monkeypatch):
+    """Before this fix, a typo'd GRASP_MCP_SEAL_MAX_BODY_BYTES silently used
+    the default forever -- indistinguishable, from the outside, from a
+    correctly configured default. _max_body_bytes/_max_response_bytes are
+    read on EVERY request (unlike GRASP_MCP_SEAL_GENESIS_ANCHOR, read once at
+    construction), so making the reader itself raise would crash every
+    request for the life of the process instead of just misconfiguring a
+    limit -- this surfaces the typo loudly, once, at startup, without
+    changing the per-request reader's safe-default behaviour at all."""
+    monkeypatch.setenv("GRASP_MCP_SEAL_MAX_BODY_BYTES", "10MiB")
+    monkeypatch.delenv("GRASP_MCP_SEAL_MAX_RESPONSE_BYTES", raising=False)
+    warnings = m._byte_env_startup_warnings()
+    assert len(warnings) == 1
+    assert "GRASP_MCP_SEAL_MAX_BODY_BYTES" in warnings[0]
+    # the per-request reader is UNCHANGED: still a safe fallback, never a raise
+    assert m._max_body_bytes() == m._DEFAULT_MAX_BODY_BYTES
+
+
 def test_seal_chain_construction_fails_fast_on_an_inadmissible_override(tmp_path, monkeypatch):
     """Validated at construction (startup), not lazily inside a per-request
     seal -- a typo'd override must refuse every call forever rather than
