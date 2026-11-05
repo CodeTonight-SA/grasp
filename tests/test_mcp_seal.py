@@ -745,6 +745,33 @@ def test_unparseable_json_body_is_refused_not_silently_unsealed(tmp_path):
     assert out["records"] == 0
 
 
+def test_invalid_utf8_body_is_refused_not_a_crash(tmp_path):
+    """``json.loads`` on bytes that are not valid UTF-8 raises
+    ``UnicodeDecodeError`` while trying to auto-detect the encoding -- a
+    SIBLING of ``json.JSONDecodeError`` under ``ValueError``, not a subclass
+    of it. ``_parse_body`` catches only ``json.JSONDecodeError``, so this
+    shape propagates uncaught out of the handler thread: the client sees the
+    connection drop with no response, not a clean refusal."""
+    home = tmp_path / "home"
+    _LenientUpstream.calls = 0
+    malformed = b"\xff\xfe not valid utf-8 at all"
+    with _running(_LenientUpstream, home) as port:
+        conn = http.client.HTTPConnection(HOST, port, timeout=5)
+        conn.request("POST", "/mcp", body=malformed, headers={"Content-Type": "application/json"})
+        try:
+            resp = conn.getresponse()
+            status = resp.status
+            resp.read()
+        except http.client.RemoteDisconnected:
+            status = None
+        conn.close()
+    assert status is not None, "invalid UTF-8 must be refused cleanly, not drop the connection"
+    assert status != 200, f"a body this proxy cannot decode must be refused, got {status}"
+    assert _LenientUpstream.calls == 0, "an undecodable body must never reach upstream"
+    out = m.verify_seal_chain(home)
+    assert out["records"] == 0
+
+
 # ---------------------------------------------------------------------------
 # No plaintext in the chain; openings carry it, mode 0600
 # ---------------------------------------------------------------------------

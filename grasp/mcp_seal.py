@@ -705,6 +705,17 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
         pending: dict[Any, _PendingCall] = {}
         session_digest = _session_digest(self.headers)
         for message in messages:
+            if "id" in message and not _is_hashable(message["id"]):
+                # JSON-RPC ids are a string, number, or null -- never an
+                # array or object. An unhashable id can never be tracked as
+                # a pending call (``pending[message["id"]]`` below would
+                # raise TypeError and crash the handler thread), so refuse
+                # BEFORE sealing an intent for it -- sealing first and
+                # discovering this after would leave a real ledger record
+                # that can never be paired with an outcome, unconditional
+                # on ``on_seal_failure`` since there is no "pass" shape for
+                # a call this proxy cannot track at all.
+                return {}, "refusing -- a JSON-RPC id must be a string, number, or null"
             sealed = self._seal_one_intent(cfg, message, session_digest)
             if sealed is None and cfg.on_seal_failure == "refuse" and \
                     message.get("method") == "tools/call":
