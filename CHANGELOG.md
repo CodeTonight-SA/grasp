@@ -64,6 +64,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Strict scheme mode** — `grasp verify --strict` refuses unverifiable records
   and reports a per-scheme histogram (F4).
 
+### Security
+
+- **`grasp_prove_claim`'s `source_path` argument is now confined and off by
+  default.** Previously it opened any path readable by the MCP server
+  process, which is harmless over stdio with one trusted local caller but
+  is a file-read oracle once the server sits behind a network bridge
+  (`docs/install/claude-for-work.md`). `source_path` now requires
+  `GRASP_SOURCE_ROOTS` (an `os.pathsep`-separated list of absolute
+  directories) to name a confinement boundary; a resolved path outside
+  those roots, a non-regular file (a FIFO, a device such as `/dev/zero`),
+  or a file over `GRASP_SOURCE_MAX_BYTES` (default 32 MiB) is refused with
+  the same message regardless of the reason, so a refusal reveals nothing
+  about the file. **Migration:** a caller that relied on `source_path`
+  working unconditionally must now either pass `source_text` directly, or
+  have the deployment set `GRASP_SOURCE_ROOTS` to cover the files it needs.
+- **`GRASP_GENESIS_ANCHOR` lets a deployment override the decision chain's
+  genesis anchor.** The default, `human:mcp-operator`, is a placeholder, not
+  a claim that a human started this process — false for a shared,
+  long-lived bridge serving many callers. Set `GRASP_GENESIS_ANCHOR` to the
+  admissible anchor (`human:` / `ci:` / `council:` / `hypo:`) a deployment
+  actually roots at; an inadmissible value is rejected rather than silently
+  accepted.
+
 ## [0.2.0] - 2026-08-01
 
 Closes the loop on the anchor. GRASP could stamp a Merkle root into Bitcoin,

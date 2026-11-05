@@ -30,6 +30,7 @@ import json
 import os
 import sys
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from grasp.context_chain import checkpoint, verify_context_chain
@@ -37,6 +38,7 @@ from grasp.continuity import build_receipt, check_continuity, current_leaf_set
 from grasp.home import grasp_home
 from grasp.idr import build_idr, append_idr, content_addr, read_idr_chain
 from grasp.idr_forest import (
+    EXOGENOUS_ANCHOR_PATTERNS,
     IdrForestError,
     _forest_leaves_ts,
     build_chain_forest,
@@ -55,9 +57,37 @@ PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "grasp"
 SERVER_VERSION = "0.2.0"
 
-#: Exogenous genesis for a fresh decision ledger: the human operator who
-#: started the session (the ``human:`` admissible-anchor class).
-GENESIS_ANCHOR = "human:mcp-operator"
+#: Default exogenous genesis for a fresh decision ledger -- used when
+#: GRASP_GENESIS_ANCHOR is unset. NOT a claim that a human started this
+#: process: the stdio<->HTTP bridge this server supports (see
+#: docs/install/claude-for-work.md) can run as one shared, long-lived daemon
+#: behind a gateway, serving many callers over time, so no single one of
+#: them "started the session" in the sense this placeholder id implies.
+_GENESIS_ANCHOR_DEFAULT = "human:mcp-operator"
+
+
+def _genesis_anchor() -> str:
+    """The exogenous genesis anchor for a fresh decision ledger.
+
+    ``GRASP_GENESIS_ANCHOR`` overrides the placeholder default: set it to the
+    admissible anchor this deployment actually roots at -- ``human:<id>`` for
+    a named operator, ``ci:<id>`` for an automated pipeline, ``council:<id>``
+    for a cross-provider verdict, ``hypo:<id>`` for a pre-registered
+    hypothesis (see ``grasp.idr_forest.EXOGENOUS_ANCHOR_PATTERNS``). An
+    override matching none of those is rejected: silently widening the
+    genesis to an inadmissible value would corrupt the guarantee exogenous
+    anchoring exists to provide, not just this one record.
+    """
+    override = os.environ.get("GRASP_GENESIS_ANCHOR", "").strip()
+    if not override:
+        return _GENESIS_ANCHOR_DEFAULT
+    if not is_admissible_anchor(override):
+        raise ValueError(
+            f"GRASP_GENESIS_ANCHOR={override!r} is not an admissible "
+            f"exogenous anchor (expected one of {EXOGENOUS_ANCHOR_PATTERNS!r} "
+            "as a prefix)"
+        )
+    return override
 
 
 # ---------------------------------------------------------------------------
@@ -69,10 +99,14 @@ def _canonical(obj: Any) -> str:
 
 
 def _decision_head() -> tuple[str, int]:
-    """(predecessor_id, depth) for the next decision record."""
+    """(predecessor_id, depth) for the next decision record.
+
+    Raises ``ValueError`` if ``GRASP_GENESIS_ANCHOR`` is set to a value that
+    is not an admissible exogenous anchor -- see ``_genesis_anchor``.
+    """
     chain = read_idr_chain()
     if not chain:
-        return GENESIS_ANCHOR, 0
+        return _genesis_anchor(), 0
     head = chain[-1]
     return head.id, head.depth + 1
 
@@ -85,7 +119,10 @@ def tool_record_decision(args: dict) -> dict:
     kind = str(args.get("kind", "agent-decision")).strip() or "agent-decision"
     inputs = args.get("inputs") if isinstance(args.get("inputs"), dict) else {}
     decision = {"what": what, "why": why}
-    predecessor, depth = _decision_head()
+    try:
+        predecessor, depth = _decision_head()
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
     fingerprint = hashlib.sha256(
         _canonical({"decision": decision, "inputs": inputs}).encode("utf-8")
     ).hexdigest()
@@ -126,6 +163,106 @@ def tool_record_belief(args: dict) -> dict:
             "records_idr": records_idr, "depth": node.depth}
 
 
+#: Default cap on a confined ``source_path`` read (``GRASP_SOURCE_MAX_BYTES``
+#: overrides). Belt-and-braces: a device such as ``/dev/zero`` is already
+#: refused for not being a regular file, before any read is attempted.
+_DEFAULT_SOURCE_MAX_BYTES = 32 * 1024 * 1024  # 32 MiB
+
+#: Exactly two refusal messages, never a third, and never one shaped by which
+#: check failed. A caller must not be able to tell, from the error text
+#: alone, whether a refused path exists, what kind of thing it is, or how
+#: large it is — only whether ``source_path`` is enabled at all.
+_SOURCE_PATH_DISABLED = (
+    "source_path is disabled: set GRASP_SOURCE_ROOTS (an os.pathsep-separated "
+    "list of absolute directories this bridge may read from) to enable it, "
+    "or pass source_text instead"
+)
+_SOURCE_PATH_REFUSED = (
+    "source_path refused: not a regular file within GRASP_SOURCE_ROOTS and "
+    "under GRASP_SOURCE_MAX_BYTES; pass source_text instead"
+)
+
+
+def _source_roots() -> tuple[Path, ...]:
+    """Parsed ``GRASP_SOURCE_ROOTS`` — fully resolved absolute directories.
+
+    Empty (unset, or set to the empty string) means ``source_path`` is off:
+    there is no cwd fallback, because a bridge's working directory often
+    holds its own secrets. A non-absolute entry is skipped rather than
+    resolved against the process's cwd, for the same reason.
+    """
+    raw = os.environ.get("GRASP_SOURCE_ROOTS", "").strip()
+    if not raw:
+        return ()
+    roots: list[Path] = []
+    for part in raw.split(os.pathsep):
+        part = part.strip()
+        if not part:
+            continue
+        candidate = Path(part).expanduser()
+        if not candidate.is_absolute():
+            continue
+        try:
+            roots.append(candidate.resolve())
+        except (OSError, RuntimeError, ValueError):
+            continue
+    return tuple(roots)
+
+
+def _max_source_bytes() -> int:
+    raw = os.environ.get("GRASP_SOURCE_MAX_BYTES", "").strip()
+    if not raw:
+        return _DEFAULT_SOURCE_MAX_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_SOURCE_MAX_BYTES
+    return value if value >= 0 else _DEFAULT_SOURCE_MAX_BYTES
+
+
+def _contained(path: Path, root: Path) -> bool:
+    """True iff ``path`` is ``root`` or a descendant of it, by path COMPONENT
+    — so ``/root-evil`` is never mistaken for being inside ``/root`` the way
+    a string-prefix check would mistake it."""
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _read_source_path(source_path: str) -> tuple[str | None, str | None]:
+    """Resolve and read ``source_path`` under the confinement policy.
+
+    Returns ``(text, error)`` — exactly one is ``None``. ``source_path`` is
+    resolved to its real path (so ``..`` segments and symlinks cannot escape
+    it) BEFORE any filesystem check runs, and every refusal reason —
+    disabled, outside the configured roots, missing, not a regular file,
+    oversize — collapses to one of the two fixed messages above, so a
+    refusal never reveals whether the named path exists, what it is, or how
+    big it is. Only a regular file is ever opened: a FIFO or a character
+    device (``/dev/zero``) is refused by its file type (checked via
+    ``stat``, which never blocks), so it is never read.
+    """
+    roots = _source_roots()
+    if not roots:
+        return None, _SOURCE_PATH_DISABLED
+    try:
+        resolved = Path(source_path).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None, _SOURCE_PATH_REFUSED
+    if not any(_contained(resolved, root) for root in roots):
+        return None, _SOURCE_PATH_REFUSED
+    try:
+        if not resolved.is_file():
+            return None, _SOURCE_PATH_REFUSED
+        if resolved.stat().st_size > _max_source_bytes():
+            return None, _SOURCE_PATH_REFUSED
+        return resolved.read_text(encoding="utf-8", errors="replace"), None
+    except OSError:
+        return None, _SOURCE_PATH_REFUSED
+
+
 def tool_prove_claim(args: dict) -> dict:
     title = str(args.get("title", "claim")).strip() or "claim"
     quote = str(args.get("quote", ""))
@@ -136,11 +273,9 @@ def tool_prove_claim(args: dict) -> dict:
     if source_text is None:
         if not source_path:
             return {"ok": False, "error": "one of 'source_path' or 'source_text' is required"}
-        try:
-            with open(source_path, encoding="utf-8", errors="replace") as fh:
-                source_text = fh.read()
-        except OSError as exc:
-            return {"ok": False, "error": f"source unreadable: {exc}"}
+        source_text, error = _read_source_path(source_path)
+        if error is not None:
+            return {"ok": False, "error": error}
     status, start, end = verify_quote(quote, str(source_text))
     verified = status == "verified"
     fuzzy = status == "fuzzy"
@@ -209,10 +344,10 @@ def _verify_decision_chain(chain: list, out: dict) -> tuple[bool, Any]:
     # 'NoneType' … 'startswith'``. The declared root is never a node and is
     # never signed-over, so it cannot change any node's HMAC tamper verdict.
     root = chain[0].predecessor_idr
-    genesis = root if is_admissible_anchor(root) else GENESIS_ANCHOR
     try:
+        genesis = root if is_admissible_anchor(root) else _genesis_anchor()
         forest = build_chain_forest(chain, genesis_anchor=genesis)
-    except IdrForestError as exc:
+    except (IdrForestError, ValueError) as exc:
         out["decision_chain"] = Verdict.BROKEN.value
         out["decision_chain_error"] = str(exc)
         return False, None
