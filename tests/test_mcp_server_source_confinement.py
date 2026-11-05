@@ -217,10 +217,26 @@ def test_source_path_refusal_identical_whether_or_not_file_exists(tmp_path, monk
 
 
 def test_source_path_refusal_carries_no_hash_or_offsets(tmp_path, monkeypatch):
+    """The no-leak property must hold for BOTH refusal shapes -- source_path
+    disabled outright (GRASP_SOURCE_ROOTS unset) and roots SET but this
+    particular path refused (outside every root, here). ``_read_source_path``
+    answers the same ``(None, error)`` shape for both, so a leak introduced
+    in only one branch must still be caught."""
     monkeypatch.delenv("GRASP_SOURCE_ROOTS", raising=False)
-    result = mcp_server.tool_prove_claim({
+    unset_result = mcp_server.tool_prove_claim({
         "quote": "x", "source_path": str(tmp_path / "anything.txt"),
     })
-    assert result["ok"] is False
-    for leaking_key in ("source_sha256", "start", "end", "filed_safe", "status"):
-        assert leaking_key not in result
+    assert unset_result["ok"] is False
+
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    monkeypatch.setenv("GRASP_SOURCE_ROOTS", str(allowed))
+    refused_result = mcp_server.tool_prove_claim({
+        "quote": "x", "source_path": str(tmp_path / "outside-the-root.txt"),
+    })
+    assert refused_result["ok"] is False
+    assert refused_result["error"] == mcp_server._SOURCE_PATH_REFUSED
+
+    leaking_keys = {"source_sha256", "start", "end", "filed_safe", "status"}
+    assert not (leaking_keys & set(unset_result))
+    assert not (leaking_keys & set(refused_result))
