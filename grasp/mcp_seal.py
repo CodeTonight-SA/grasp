@@ -715,22 +715,30 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
 
     # -- sealing intents before forwarding --------------------------------
 
+    def _invalid_id_message(self, messages: list[dict]) -> str | None:
+        """A pre-pass over the WHOLE batch's id shapes, run before any intent
+        is sealed. A JSON-RPC id is a string, number, or null -- never an
+        array, object, or boolean (``bool`` is a Python ``int`` subclass and
+        is hashable, so it would otherwise slip past a bare hashability
+        check, despite this very refusal message's own claim). Checking
+        every message FIRST also means one bad id anywhere in a batch can
+        never strand an earlier message's intent -- already durably sealed
+        to the ledger by the time a later id is found bad -- for a call the
+        refused batch then never forwards."""
+        for message in messages:
+            value = message.get("id")
+            if "id" in message and (isinstance(value, bool) or not _is_hashable(value)):
+                return "refusing -- a JSON-RPC id must be a string, number, or null"
+        return None
+
     def _seal_intents(self, cfg: ProxyConfig,
                        messages: list[dict]) -> tuple[dict[Any, _PendingCall], str | None]:
+        invalid = self._invalid_id_message(messages)
+        if invalid is not None:
+            return {}, invalid
         pending: dict[Any, _PendingCall] = {}
         session_digest = _session_digest(self.headers)
         for message in messages:
-            if "id" in message and not _is_hashable(message["id"]):
-                # JSON-RPC ids are a string, number, or null -- never an
-                # array or object. An unhashable id can never be tracked as
-                # a pending call (``pending[message["id"]]`` below would
-                # raise TypeError and crash the handler thread), so refuse
-                # BEFORE sealing an intent for it -- sealing first and
-                # discovering this after would leave a real ledger record
-                # that can never be paired with an outcome, unconditional
-                # on ``on_seal_failure`` since there is no "pass" shape for
-                # a call this proxy cannot track at all.
-                return {}, "refusing -- a JSON-RPC id must be a string, number, or null"
             sealed = self._seal_one_intent(cfg, message, session_digest)
             if sealed is None and cfg.on_seal_failure == "refuse" and \
                     message.get("method") == "tools/call":

@@ -429,6 +429,43 @@ def test_non_scalar_id_is_refused_not_a_crash(tmp_path):
     assert out["records"] == 0, "nothing can be honestly paired for an id that cannot be tracked"
 
 
+def test_batch_earlier_valid_call_is_not_stranded_by_a_later_non_scalar_id(tmp_path):
+    """A batch of two tools/call messages: the first has an ordinary id, the
+    second's id is a list (unhashable). ``_seal_intents`` used to seal the
+    first message's intent, THEN discover the second message's id cannot be
+    tracked and refuse the whole batch -- leaving the first intent durably on
+    the ledger for a call that was never forwarded and can never be paired
+    with an outcome. The id-shape check must run as a pre-pass over the whole
+    batch, before any intent in it is sealed."""
+    home = tmp_path / "home"
+    _CallCountingUpstream.calls = 0
+    batch = [_tool_call(1, name="first"), _tool_call([1, 2], name="second")]
+    with _running(_CallCountingUpstream, home) as port:
+        status, _, data = _post(port, batch)
+    assert status == 200
+    assert _CallCountingUpstream.calls == 0, "a refused batch must never reach upstream"
+    out = m.verify_seal_chain(home)
+    assert out["records"] == 0, "the first message's intent must not be sealed when the " \
+                                 "batch is refused for the second message's id"
+
+
+def test_boolean_id_is_refused_like_a_non_scalar_id(tmp_path):
+    """A JSON-RPC id is a string, number, or null -- the refusal message for a
+    non-scalar id already says so. But ``bool`` is a Python ``int`` subclass,
+    so ``True``/``False`` are hashable and used to slip past the check this
+    message describes. A boolean id must be refused the same way a list or
+    dict id is."""
+    home = tmp_path / "home"
+    _CallCountingUpstream.calls = 0
+    with _running(_CallCountingUpstream, home) as port:
+        status, _, data = _post(port, _tool_call(True))
+    assert status == 200
+    assert "error" in json.loads(data), f"expected a JSON-RPC error object, got {data!r}"
+    assert _CallCountingUpstream.calls == 0, "a boolean id must never reach upstream"
+    out = m.verify_seal_chain(home)
+    assert out["records"] == 0, "a boolean id must not be sealed as if it were a real id"
+
+
 # ---------------------------------------------------------------------------
 # A batch response framed as a single SSE event carrying a JSON array
 # ---------------------------------------------------------------------------
