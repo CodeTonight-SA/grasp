@@ -25,8 +25,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 class McpClient:
     """Minimal newline-delimited JSON-RPC client over a server subprocess."""
 
-    def __init__(self, home: Path):
+    def __init__(self, home: Path, extra_env: dict[str, str] | None = None):
         env = dict(os.environ, GRASP_HOME=str(home), PYTHONPATH=str(REPO_ROOT))
+        if extra_env:
+            env.update(extra_env)
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "grasp.mcp_server"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -62,7 +64,11 @@ class McpClient:
 
 @pytest.fixture()
 def client(tmp_path):
-    c = McpClient(tmp_path / "grasp-home")
+    # GRASP_SOURCE_ROOTS=tmp_path: source_path is confined (off by default —
+    # see test_mcp_server_source_confinement.py), and every fixture-using test
+    # that passes source_path writes its source file somewhere under tmp_path,
+    # so this one line keeps that coverage without touching those tests' bodies.
+    c = McpClient(tmp_path / "grasp-home", extra_env={"GRASP_SOURCE_ROOTS": str(tmp_path)})
     resp = c.request("initialize", {
         "protocolVersion": "2025-06-18",
         "capabilities": {},

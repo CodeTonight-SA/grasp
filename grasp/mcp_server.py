@@ -30,6 +30,7 @@ import json
 import os
 import sys
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from grasp.context_chain import checkpoint, verify_context_chain
@@ -126,6 +127,106 @@ def tool_record_belief(args: dict) -> dict:
             "records_idr": records_idr, "depth": node.depth}
 
 
+#: Default cap on a confined ``source_path`` read (``GRASP_SOURCE_MAX_BYTES``
+#: overrides). Belt-and-braces: a device such as ``/dev/zero`` is already
+#: refused for not being a regular file, before any read is attempted.
+_DEFAULT_SOURCE_MAX_BYTES = 32 * 1024 * 1024  # 32 MiB
+
+#: Exactly two refusal messages, never a third, and never one shaped by which
+#: check failed. A caller must not be able to tell, from the error text
+#: alone, whether a refused path exists, what kind of thing it is, or how
+#: large it is — only whether ``source_path`` is enabled at all.
+_SOURCE_PATH_DISABLED = (
+    "source_path is disabled: set GRASP_SOURCE_ROOTS (an os.pathsep-separated "
+    "list of absolute directories this bridge may read from) to enable it, "
+    "or pass source_text instead"
+)
+_SOURCE_PATH_REFUSED = (
+    "source_path refused: not a regular file within GRASP_SOURCE_ROOTS and "
+    "under GRASP_SOURCE_MAX_BYTES; pass source_text instead"
+)
+
+
+def _source_roots() -> tuple[Path, ...]:
+    """Parsed ``GRASP_SOURCE_ROOTS`` — fully resolved absolute directories.
+
+    Empty (unset, or set to the empty string) means ``source_path`` is off:
+    there is no cwd fallback, because a bridge's working directory often
+    holds its own secrets. A non-absolute entry is skipped rather than
+    resolved against the process's cwd, for the same reason.
+    """
+    raw = os.environ.get("GRASP_SOURCE_ROOTS", "").strip()
+    if not raw:
+        return ()
+    roots: list[Path] = []
+    for part in raw.split(os.pathsep):
+        part = part.strip()
+        if not part:
+            continue
+        candidate = Path(part).expanduser()
+        if not candidate.is_absolute():
+            continue
+        try:
+            roots.append(candidate.resolve())
+        except (OSError, RuntimeError, ValueError):
+            continue
+    return tuple(roots)
+
+
+def _max_source_bytes() -> int:
+    raw = os.environ.get("GRASP_SOURCE_MAX_BYTES", "").strip()
+    if not raw:
+        return _DEFAULT_SOURCE_MAX_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_SOURCE_MAX_BYTES
+    return value if value >= 0 else _DEFAULT_SOURCE_MAX_BYTES
+
+
+def _contained(path: Path, root: Path) -> bool:
+    """True iff ``path`` is ``root`` or a descendant of it, by path COMPONENT
+    — so ``/root-evil`` is never mistaken for being inside ``/root`` the way
+    a string-prefix check would mistake it."""
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _read_source_path(source_path: str) -> tuple[str | None, str | None]:
+    """Resolve and read ``source_path`` under the confinement policy.
+
+    Returns ``(text, error)`` — exactly one is ``None``. ``source_path`` is
+    resolved to its real path (so ``..`` segments and symlinks cannot escape
+    it) BEFORE any filesystem check runs, and every refusal reason —
+    disabled, outside the configured roots, missing, not a regular file,
+    oversize — collapses to one of the two fixed messages above, so a
+    refusal never reveals whether the named path exists, what it is, or how
+    big it is. Only a regular file is ever opened: a FIFO or a character
+    device (``/dev/zero``) is refused by its file type (checked via
+    ``stat``, which never blocks), so it is never read.
+    """
+    roots = _source_roots()
+    if not roots:
+        return None, _SOURCE_PATH_DISABLED
+    try:
+        resolved = Path(source_path).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None, _SOURCE_PATH_REFUSED
+    if not any(_contained(resolved, root) for root in roots):
+        return None, _SOURCE_PATH_REFUSED
+    try:
+        if not resolved.is_file():
+            return None, _SOURCE_PATH_REFUSED
+        if resolved.stat().st_size > _max_source_bytes():
+            return None, _SOURCE_PATH_REFUSED
+        return resolved.read_text(encoding="utf-8", errors="replace"), None
+    except OSError:
+        return None, _SOURCE_PATH_REFUSED
+
+
 def tool_prove_claim(args: dict) -> dict:
     title = str(args.get("title", "claim")).strip() or "claim"
     quote = str(args.get("quote", ""))
@@ -136,11 +237,9 @@ def tool_prove_claim(args: dict) -> dict:
     if source_text is None:
         if not source_path:
             return {"ok": False, "error": "one of 'source_path' or 'source_text' is required"}
-        try:
-            with open(source_path, encoding="utf-8", errors="replace") as fh:
-                source_text = fh.read()
-        except OSError as exc:
-            return {"ok": False, "error": f"source unreadable: {exc}"}
+        source_text, error = _read_source_path(source_path)
+        if error is not None:
+            return {"ok": False, "error": error}
     status, start, end = verify_quote(quote, str(source_text))
     verified = status == "verified"
     fuzzy = status == "fuzzy"
