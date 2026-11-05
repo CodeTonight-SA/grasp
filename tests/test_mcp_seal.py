@@ -171,6 +171,29 @@ class _CallCountingUpstream(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class _DuplicateHeaderUpstream(http.server.BaseHTTPRequestHandler):
+    """Records every value of a repeated request header it actually received
+    -- the probe for "no header value is silently dropped"."""
+
+    seen_dup: list = []
+
+    def do_POST(self):  # noqa: N802
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length else b""
+        type(self).seen_dup = self.headers.get_all("X-Dup") or []
+        parsed = json.loads(body) if body else {}
+        out = json.dumps({"jsonrpc": "2.0", "id": parsed.get("id"),
+                          "result": {"content": [], "isError": False}}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):  # noqa: D102
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Harness: a real upstream + a real proxy, both on loopback, daemon threads
 # ---------------------------------------------------------------------------
@@ -379,6 +402,28 @@ def test_header_passthrough_both_directions(tmp_path):
     assert _JsonEchoUpstream.seen_auth == ["Bearer super-secret-token"]
     assert _JsonEchoUpstream.seen_session == ["session-abc"]
     assert headers.get("X-Echo") == "round-trip-value"
+
+
+def test_duplicate_request_headers_are_not_collapsed(tmp_path):
+    """A client is allowed to send the same header name twice (e.g. two
+    ``Cookie`` lines). The proxy must forward every value -- a dict-based
+    dedup would silently keep only the last one."""
+    home = tmp_path / "home"
+    _DuplicateHeaderUpstream.seen_dup = []
+    body = json.dumps(_tool_call(1)).encode("utf-8")
+    with _running(_DuplicateHeaderUpstream, home) as port:
+        conn = http.client.HTTPConnection(HOST, port, timeout=5)
+        conn.putrequest("POST", "/mcp")
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", str(len(body)))
+        conn.putheader("X-Dup", "first")
+        conn.putheader("X-Dup", "second")
+        conn.endheaders(body)
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+    assert resp.status == 200
+    assert _DuplicateHeaderUpstream.seen_dup == ["first", "second"]
 
 
 # ---------------------------------------------------------------------------

@@ -377,19 +377,18 @@ def _connect(cfg: ProxyConfig) -> http.client.HTTPConnection:
     return cls(cfg.upstream_host, cfg.upstream_port, timeout=30)
 
 
-def _forward_headers(headers) -> dict:
-    """Every header the client sent, minus HOP_BY_HOP. No allowlist: a
-    reverse proxy that only forwards headers it recognises breaks on the
-    first header it does not -- Authorization/Mcp-Session-Id/Accept all pass
-    through simply because they are not hop-by-hop, same as anything else."""
-    out: dict[str, str] = {}
-    for name, value in headers.items():
-        if name.lower() not in HOP_BY_HOP:
-            out[name] = value
-    return out
+def _forward_headers(headers) -> list[tuple[str, str]]:
+    """Every header the client sent, minus HOP_BY_HOP -- as a LIST of pairs,
+    not a dict, so a repeated header name (two ``Cookie`` lines, say -- legal
+    HTTP, however unusual) keeps every value. A dict would silently collapse
+    to the last one, dropping the rest. No allowlist: a reverse proxy that
+    only forwards headers it recognises breaks on the first header it does
+    not -- Authorization/Mcp-Session-Id/Accept all pass through simply
+    because they are not hop-by-hop, same as anything else."""
+    return [(name, value) for name, value in headers.items() if name.lower() not in HOP_BY_HOP]
 
 
-def _forward(cfg: ProxyConfig, method: str, path: str, headers: dict,
+def _forward(cfg: ProxyConfig, method: str, path: str, headers: list[tuple[str, str]],
              body: bytes) -> tuple[http.client.HTTPConnection, http.client.HTTPResponse]:
     """Forward one request to the FIXED upstream. ``skip_accept_encoding``
     keeps this a pure passthrough -- we never want http.client silently
@@ -398,7 +397,7 @@ def _forward(cfg: ProxyConfig, method: str, path: str, headers: dict,
     target = cfg.upstream_base_path + path
     conn.putrequest(method, target, skip_host=True, skip_accept_encoding=True)
     conn.putheader("Host", f"{cfg.upstream_host}:{cfg.upstream_port}")
-    for name, value in headers.items():
+    for name, value in headers:
         conn.putheader(name, value)
     if body:
         conn.putheader("Content-Length", str(len(body)))

@@ -92,11 +92,12 @@ OWN `Host` header on the outbound leg.
 ## What is forwarded, and what is not
 
 - **Forwarded as-is**: the request path and query string, `Authorization`,
-  `Mcp-Session-Id`, `Accept`, and every other header the client sent, except
-  the hop-by-hop set (`Connection`, `Keep-Alive`, `Proxy-Authenticate`,
-  `Proxy-Authorization`, `TE`, `Trailers`, `Transfer-Encoding`, `Upgrade`,
-  `Host`, `Content-Length` -- the last two are recomputed for the fixed
-  upstream, never carried through verbatim).
+  `Mcp-Session-Id`, `Accept`, and every other header the client sent --
+  including every value of a header sent more than once (two `Cookie` lines,
+  say) -- except the hop-by-hop set (`Connection`, `Keep-Alive`,
+  `Proxy-Authenticate`, `Proxy-Authorization`, `TE`, `Trailers`,
+  `Transfer-Encoding`, `Upgrade`, `Host`, `Content-Length` -- the last two are
+  recomputed for the fixed upstream, never carried through verbatim).
 - **Streamed, never buffered**: an SSE (`text/event-stream`) response is
   relayed to the client chunk by chunk as it arrives from upstream -- the
   seal never waits for the stream to end before forwarding what it has
