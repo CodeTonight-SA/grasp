@@ -18,9 +18,12 @@ Follow these rules:
 
 3. **Claims.** Before asserting that a source says something — quoting a file,
    a document, a spec — call `grasp_prove_claim` with the verbatim `quote` and
-   the `source_path`. If the result is `not_found`, do NOT assert the claim;
-   say plainly that you could not verify it. A fabricated citation cannot
-   pass this check, and that is the point.
+   the source. Prefer `source_text` with the content directly: `source_path`
+   only works when this deployment has explicitly enabled it
+   (`GRASP_SOURCE_ROOTS` set to a directory covering the file) and is refused
+   otherwise. If the result is `not_found`, do NOT assert the claim; say
+   plainly that you could not verify it. A fabricated citation cannot pass
+   this check, and that is the point.
 
 4. **Verification.** When the user asks whether the record is intact, or at
    the end of a substantial session, call `grasp_verify` and report the
