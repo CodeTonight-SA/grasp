@@ -865,6 +865,44 @@ def test_negative_content_length_is_refused_not_silently_emptied(tmp_path):
     assert out["records"] == 0
 
 
+def test_conflicting_content_length_headers_are_refused_before_any_read(tmp_path):
+    """RFC 7230 S3.3.2 / RFC 9112 S6.3: two Content-Length header lines with
+    DIFFERENT values must be rejected, not resolved by trusting one of them --
+    ``self.headers.get("Content-Length")`` (an ``email.message.Message``)
+    silently returns only the FIRST occurrence, exactly the same shape this
+    module already reads with ``get_all`` for ``Connection``
+    (``test_second_connection_header_line_still_strips_its_named_header``)
+    because a single ``.get`` there could smuggle a header past the strip.
+    Content-Length was still read with plain ``.get``: a client sends a huge
+    first value and a small second (true) value, then only the small body it
+    promised. A handler that trusts the first value calls
+    ``self.rfile.read(999999999)`` and blocks forever waiting for bytes that
+    are never coming -- this test's 5s client timeout is what turns that hang
+    into a failure, mirroring
+    ``test_oversized_declared_body_is_refused_before_any_read``. A handler
+    that detects the conflict first refuses immediately, before reading a
+    single body byte."""
+    home = tmp_path / "home"
+    _CallCountingUpstream.calls = 0
+    with _running(_CallCountingUpstream, home) as port:
+        conn = http.client.HTTPConnection(HOST, port, timeout=5)
+        conn.putrequest("POST", "/mcp")
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", "999999999")  # never sent -- would hang a naive reader
+        conn.putheader("Content-Length", "2")  # the real, much smaller, length
+        conn.endheaders(b"{}")
+        resp = conn.getresponse()
+        data = resp.read()
+        conn.close()
+    assert resp.status == 400, f"expected 400 Bad Request, got {resp.status}"
+    assert "Content-Length" in json.loads(data)["error"]["message"]
+    assert _CallCountingUpstream.calls == 0, (
+        "a request whose Content-Length conflicts with itself must never reach upstream"
+    )
+    out = m.verify_seal_chain(home)
+    assert out["records"] == 0, "nothing can be honestly sealed for a body this proxy never read"
+
+
 # ---------------------------------------------------------------------------
 # A POST body that fails this proxy's own JSON parse: refused, never
 # forwarded on good faith to a possibly more tolerant upstream

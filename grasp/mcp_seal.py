@@ -157,6 +157,29 @@ class _MalformedContentLength(Exception):
         self.declared = declared
 
 
+class _ConflictingContentLength(Exception):
+    """The client sent more than one ``Content-Length`` header with
+    DIFFERENT values (RFC 7230 S3.3.2 / RFC 9112 S6.3: a recipient MUST
+    either reject such a message or collapse IDENTICAL duplicates to one --
+    it must never pick one of several DIFFERING values). This module already
+    reads ``Connection`` with ``get_all`` instead of ``get`` for exactly this
+    reason (a single ``.get`` there, ``email.message.Message`` returning only
+    the FIRST occurrence, could smuggle a header past the hop-by-hop strip --
+    see ``test_second_connection_header_line_still_strips_its_named_header``).
+    Content-Length is the same shape and the more dangerous one: trusting an
+    attacker-chosen one of two declared lengths reads the wrong number of
+    bytes from the socket, leaving the true tail of the body (or the
+    continuation of a huge bogus length that was never sent) unread -- the
+    next request on the same persistent connection then misreads those bytes
+    as its own request line, the same desync class ``_MalformedContentLength``
+    and ``_ChunkedBodyNotSupported`` already guard. Raised BEFORE any byte of
+    the body is read."""
+
+    def __init__(self, declared: list[str]) -> None:
+        super().__init__(f"conflicting values: {declared!r}")
+        self.declared = declared
+
+
 class _ChunkedBodyNotSupported(Exception):
     """The client declared ``Transfer-Encoding`` -- this proxy does not
     decode a transfer-coded request body. Treating ``Content-Length`` as
@@ -697,7 +720,10 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
     def _read_body(self) -> bytes:
         if self.headers.get("Transfer-Encoding"):
             raise _ChunkedBodyNotSupported()
-        length = self.headers.get("Content-Length")
+        declared = self.headers.get_all("Content-Length") or []
+        if len(set(declared)) > 1:
+            raise _ConflictingContentLength(declared)
+        length = declared[0] if declared else None
         if not length:
             return b""
         try:
@@ -761,15 +787,18 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
 
     def _read_body_or_refuse(self) -> bytes | None:
         """The request body, or ``None`` once a refusal has already been
-        written -- the three framing defects this proxy cannot safely
-        guess past (an oversize declared length, one that is not a valid
-        non-negative integer, or a transfer-coded body it does not
-        decode)."""
+        written -- the four framing defects this proxy cannot safely guess
+        past (an oversize declared length, one that is not a valid
+        non-negative integer, two DIFFERING declared lengths, or a
+        transfer-coded body it does not decode)."""
         try:
             return self._read_body()
         except _BodyTooLarge as exc:
             self._refuse_framing(413, f"request body of {exc.declared} bytes exceeds the "
                                        f"{exc.cap}-byte cap (GRASP_MCP_SEAL_MAX_BODY_BYTES)")
+        except _ConflictingContentLength as exc:
+            self._refuse_framing(
+                400, f"Content-Length sent more than once with different values: {exc.declared!r}")
         except _MalformedContentLength as exc:
             self._refuse_framing(
                 400, f"Content-Length is not a valid non-negative integer: {exc.declared!r}")
