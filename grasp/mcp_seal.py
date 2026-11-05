@@ -425,7 +425,14 @@ def _is_hashable(value: Any) -> bool:
 
 
 def _tool_call_args(message: dict) -> tuple[str, Any]:
-    params = message.get("params") or {}
+    params = message.get("params")
+    if not isinstance(params, dict):
+        # ``or {}`` alone only catches a FALSY non-dict (None, []) -- a
+        # truthy non-dict (a non-empty list) would stay a list and crash the
+        # next line's ``.get()`` uncaught in the handler thread. ``tools/call``
+        # params is specified as an object; anything else is treated the same
+        # as absent, exactly like a missing ``name``/``arguments`` key.
+        params = {}
     return str(params.get("name", "")), params.get("arguments", {})
 
 

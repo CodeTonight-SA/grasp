@@ -447,6 +447,35 @@ def test_non_scalar_id_is_refused_not_a_crash(tmp_path):
     assert out["records"] == 0, "nothing can be honestly paired for an id that cannot be tracked"
 
 
+def test_list_shaped_params_does_not_crash_the_handler(tmp_path):
+    """``tools/call``'s ``params`` is specified as an object. ``_tool_call_args``
+    used ``message.get("params") or {}``, which only normalises a FALSY
+    non-dict (``None``, ``[]``) to ``{}`` -- a TRUTHY non-dict (a non-empty
+    list) stays a list, and ``params.get("name", "")`` then raises
+    ``AttributeError: 'list' object has no attribute 'get'`` uncaught in the
+    handler thread: the client sees the connection drop with no JSON-RPC
+    response, the same failure shape ``test_non_scalar_id_is_refused_not_a_crash``
+    already covers for a different malformed shape."""
+    home = tmp_path / "home"
+    body = json.dumps({"jsonrpc": "2.0", "method": "tools/call",
+                        "params": [1, 2, 3], "id": 1}).encode("utf-8")
+    with _running(_JsonEchoUpstream, home) as port:
+        conn = http.client.HTTPConnection(HOST, port, timeout=5)
+        conn.request("POST", "/mcp", body=body, headers={"Content-Type": "application/json"})
+        try:
+            resp = conn.getresponse()
+            status = resp.status
+            data = resp.read()
+        except http.client.RemoteDisconnected:
+            status, data = None, b""
+        conn.close()
+    assert status is not None, "a list-shaped params must not drop the connection"
+    assert status == 200
+    assert json.loads(data)["id"] == 1
+    out = m.verify_seal_chain(home)
+    assert out["records"] == 2, "a malformed-but-recoverable call is still sealed, not silently skipped"
+
+
 def test_batch_earlier_valid_call_is_not_stranded_by_a_later_non_scalar_id(tmp_path):
     """A batch of two tools/call messages: the first has an ordinary id, the
     second's id is a list (unhashable). ``_seal_intents`` used to seal the
