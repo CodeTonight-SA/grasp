@@ -49,6 +49,7 @@ grasp = "grasp.cli:main"
 grasp-prove-it = "grasp.prove_it:main"
 grasp-legal-receipt = "grasp.legal_receipt:main"
 grasp-mcp = "grasp.mcp_server:main"
+grasp-mcp-seal = "grasp.mcp_seal:main"
 
 [tool.setuptools]
 packages = ["grasp", "grasp.storage"]
