@@ -427,6 +427,33 @@ def test_duplicate_request_headers_are_not_collapsed(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Request body cap -- a declared Content-Length past the cap is refused
+# BEFORE a single byte is read from the socket (resource-exhaustion probe)
+# ---------------------------------------------------------------------------
+
+def test_oversized_declared_body_is_refused_before_any_read(tmp_path, monkeypatch):
+    monkeypatch.setenv("GRASP_MCP_SEAL_MAX_BODY_BYTES", "1024")
+    home = tmp_path / "home"
+    _CallCountingUpstream.calls = 0
+    with _running(_CallCountingUpstream, home) as port:
+        conn = http.client.HTTPConnection(HOST, port, timeout=5)
+        conn.putrequest("POST", "/mcp")
+        conn.putheader("Content-Type", "application/json")
+        # A caller claims a body far past the cap -- and never sends it. A
+        # handler that trusts this header and calls rfile.read(n) blocks here
+        # until the timeout fires; one that checks the cap first refuses
+        # immediately without reading a byte.
+        conn.putheader("Content-Length", "999999999")
+        conn.endheaders()
+        resp = conn.getresponse()
+        data = resp.read()
+        conn.close()
+    assert resp.status == 413
+    assert "exceeds" in json.loads(data)["error"]["message"]
+    assert _CallCountingUpstream.calls == 0
+
+
+# ---------------------------------------------------------------------------
 # No plaintext in the chain; openings carry it, mode 0600
 # ---------------------------------------------------------------------------
 

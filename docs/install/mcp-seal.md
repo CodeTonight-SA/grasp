@@ -98,6 +98,11 @@ OWN `Host` header on the outbound leg.
   `Proxy-Authenticate`, `Proxy-Authorization`, `TE`, `Trailers`,
   `Transfer-Encoding`, `Upgrade`, `Host`, `Content-Length` -- the last two are
   recomputed for the fixed upstream, never carried through verbatim).
+- **Capped, before a byte is read**: a request body whose declared
+  `Content-Length` exceeds `GRASP_MCP_SEAL_MAX_BODY_BYTES` (default 10 MiB) is
+  refused with HTTP 413 -- the socket is never read toward a caller-declared
+  size this large, and the connection is closed rather than left to desync a
+  later request on the same keep-alive connection.
 - **Streamed, never buffered**: an SSE (`text/event-stream`) response is
   relayed to the client chunk by chunk as it arrives from upstream -- the
   seal never waits for the stream to end before forwarding what it has

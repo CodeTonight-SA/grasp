@@ -82,6 +82,35 @@ HONEST_LIMIT = (
     "lies. Anchor the head externally (e.g. `grasp anchor`) if that matters."
 )
 
+#: Cap on a request body this proxy will read, overridable via
+#: GRASP_MCP_SEAL_MAX_BODY_BYTES. A JSON-RPC tool-call payload is small; a
+#: caller-declared Content-Length far past this is refused BEFORE a single
+#: byte is read from the socket -- belt-and-braces against the uncapped
+#: ``rfile.read(n)`` a hostile Content-Length would otherwise turn into
+#: (an unauthenticated caller forcing a large synchronous read/allocation).
+_DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MiB
+
+
+class _BodyTooLarge(Exception):
+    """Declared Content-Length exceeds the configured cap -- raised before
+    any byte of the body is read from the socket."""
+
+    def __init__(self, declared: int, cap: int) -> None:
+        super().__init__(f"declared {declared} bytes, cap {cap}")
+        self.declared = declared
+        self.cap = cap
+
+
+def _max_body_bytes() -> int:
+    raw = os.environ.get("GRASP_MCP_SEAL_MAX_BODY_BYTES", "").strip()
+    if not raw:
+        return _DEFAULT_MAX_BODY_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_MAX_BODY_BYTES
+    return value if value >= 0 else _DEFAULT_MAX_BODY_BYTES
+
 
 # ---------------------------------------------------------------------------
 # Paths, commitments, openings, failures
@@ -449,6 +478,9 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
             n = int(length)
         except ValueError:
             return b""
+        cap = _max_body_bytes()
+        if n > cap:
+            raise _BodyTooLarge(n, cap)
         return self.rfile.read(n) if n > 0 else b""
 
     def _parse_body(self, method: str, body: bytes) -> tuple[bool, list[dict]]:
@@ -464,7 +496,18 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
 
     def _handle(self, method: str) -> None:
         cfg: ProxyConfig = self.server.seal_config  # type: ignore[attr-defined]
-        body = self._read_body()
+        try:
+            body = self._read_body()
+        except _BodyTooLarge as exc:
+            # Refuse WITHOUT draining the socket -- the declared bytes were
+            # never read, so force this connection closed rather than risk
+            # a later request on the same keep-alive connection being
+            # misparsed against an undrained body.
+            self.close_connection = True
+            message = (f"request body of {exc.declared} bytes exceeds the "
+                       f"{exc.cap}-byte cap (GRASP_MCP_SEAL_MAX_BODY_BYTES)")
+            self._write_json(413, json.dumps(_jsonrpc_error_obj(None, message)).encode("utf-8"))
+            return
         was_batch, messages = self._parse_body(method, body)
         pending: dict[Any, _PendingCall] = {}
         if method == "POST" and messages:
