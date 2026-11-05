@@ -273,12 +273,19 @@ class _UpstreamResponseTooLarge(Exception):
 def _read_capped(resp: http.client.HTTPResponse, cap: int) -> bytes:
     """Read a response body incrementally (never one unbounded ``.read()``),
     raising once the running total exceeds ``cap`` -- before anything has
-    been sent to the client, so the caller can still refuse cleanly."""
+    been sent to the client, so the caller can still refuse cleanly.
+
+    ``read1`` answers an early end of stream with empty bytes, not an error.
+    The caller then writes its own ``Content-Length``, so a reply that broke
+    off would reach the client looking complete. ``resp.length`` holds the
+    declared bytes still owed, which is what catches that."""
     chunks: list[bytes] = []
     total = 0
     while True:
         chunk = resp.read1(READ_CHUNK)
         if not chunk:
+            if resp.length:
+                raise http.client.IncompleteRead(b"".join(chunks), resp.length)
             return b"".join(chunks)
         total += len(chunk)
         if total > cap:
