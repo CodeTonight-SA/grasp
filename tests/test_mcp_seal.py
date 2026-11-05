@@ -596,6 +596,33 @@ def test_connection_listed_header_is_stripped_from_forward(tmp_path):
     )
 
 
+def test_hop_by_hop_headers_themselves_are_never_forwarded(tmp_path):
+    """HOP_BY_HOP's own fixed members, not a header NAMED inside Connection's
+    value (the test above covers that case already) -- a plain ``Connection``,
+    ``Keep-Alive`` or ``TE`` header sent by the client must never reach
+    upstream. Mutation-tested: emptying HOP_BY_HOP to frozenset() left the
+    whole suite green with no test catching it before this one existed."""
+    home = tmp_path / "home"
+    _HeaderEchoUpstream.seen_headers = {}
+    body = json.dumps(_tool_call(1)).encode("utf-8")
+    with _running(_HeaderEchoUpstream, home) as port:
+        conn = http.client.HTTPConnection(HOST, port, timeout=5)
+        conn.putrequest("POST", "/mcp")
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", str(len(body)))
+        conn.putheader("Connection", "keep-alive")
+        conn.putheader("Keep-Alive", "timeout=5")
+        conn.putheader("TE", "trailers")
+        conn.endheaders(body)
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+    assert resp.status == 200
+    seen = {name.lower() for name in _HeaderEchoUpstream.seen_headers}
+    for hop in ("connection", "keep-alive", "te"):
+        assert hop not in seen, f"{hop!r} is hop-by-hop and must never reach upstream"
+
+
 def test_second_connection_header_line_still_strips_its_named_header(tmp_path):
     """RFC 7230 S3.2.2: Connection is a comma-separated-list header, so a
     client MAY split it across two header lines instead of one comma-joined
