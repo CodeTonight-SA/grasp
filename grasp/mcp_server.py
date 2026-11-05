@@ -38,6 +38,7 @@ from grasp.continuity import build_receipt, check_continuity, current_leaf_set
 from grasp.home import grasp_home
 from grasp.idr import build_idr, append_idr, content_addr, read_idr_chain
 from grasp.idr_forest import (
+    EXOGENOUS_ANCHOR_PATTERNS,
     IdrForestError,
     _forest_leaves_ts,
     build_chain_forest,
@@ -56,9 +57,37 @@ PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "grasp"
 SERVER_VERSION = "0.2.0"
 
-#: Exogenous genesis for a fresh decision ledger: the human operator who
-#: started the session (the ``human:`` admissible-anchor class).
-GENESIS_ANCHOR = "human:mcp-operator"
+#: Default exogenous genesis for a fresh decision ledger -- used when
+#: GRASP_GENESIS_ANCHOR is unset. NOT a claim that a human started this
+#: process: the stdio<->HTTP bridge this server supports (see
+#: docs/install/claude-for-work.md) can run as one shared, long-lived daemon
+#: behind a gateway, serving many callers over time, so no single one of
+#: them "started the session" in the sense this placeholder id implies.
+_GENESIS_ANCHOR_DEFAULT = "human:mcp-operator"
+
+
+def _genesis_anchor() -> str:
+    """The exogenous genesis anchor for a fresh decision ledger.
+
+    ``GRASP_GENESIS_ANCHOR`` overrides the placeholder default: set it to the
+    admissible anchor this deployment actually roots at -- ``human:<id>`` for
+    a named operator, ``ci:<id>`` for an automated pipeline, ``council:<id>``
+    for a cross-provider verdict, ``hypo:<id>`` for a pre-registered
+    hypothesis (see ``grasp.idr_forest.EXOGENOUS_ANCHOR_PATTERNS``). An
+    override matching none of those is rejected: silently widening the
+    genesis to an inadmissible value would corrupt the guarantee exogenous
+    anchoring exists to provide, not just this one record.
+    """
+    override = os.environ.get("GRASP_GENESIS_ANCHOR", "").strip()
+    if not override:
+        return _GENESIS_ANCHOR_DEFAULT
+    if not is_admissible_anchor(override):
+        raise ValueError(
+            f"GRASP_GENESIS_ANCHOR={override!r} is not an admissible "
+            f"exogenous anchor (expected one of {EXOGENOUS_ANCHOR_PATTERNS!r} "
+            "as a prefix)"
+        )
+    return override
 
 
 # ---------------------------------------------------------------------------
@@ -70,10 +99,14 @@ def _canonical(obj: Any) -> str:
 
 
 def _decision_head() -> tuple[str, int]:
-    """(predecessor_id, depth) for the next decision record."""
+    """(predecessor_id, depth) for the next decision record.
+
+    Raises ``ValueError`` if ``GRASP_GENESIS_ANCHOR`` is set to a value that
+    is not an admissible exogenous anchor -- see ``_genesis_anchor``.
+    """
     chain = read_idr_chain()
     if not chain:
-        return GENESIS_ANCHOR, 0
+        return _genesis_anchor(), 0
     head = chain[-1]
     return head.id, head.depth + 1
 
@@ -86,7 +119,10 @@ def tool_record_decision(args: dict) -> dict:
     kind = str(args.get("kind", "agent-decision")).strip() or "agent-decision"
     inputs = args.get("inputs") if isinstance(args.get("inputs"), dict) else {}
     decision = {"what": what, "why": why}
-    predecessor, depth = _decision_head()
+    try:
+        predecessor, depth = _decision_head()
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
     fingerprint = hashlib.sha256(
         _canonical({"decision": decision, "inputs": inputs}).encode("utf-8")
     ).hexdigest()
@@ -308,10 +344,10 @@ def _verify_decision_chain(chain: list, out: dict) -> tuple[bool, Any]:
     # 'NoneType' … 'startswith'``. The declared root is never a node and is
     # never signed-over, so it cannot change any node's HMAC tamper verdict.
     root = chain[0].predecessor_idr
-    genesis = root if is_admissible_anchor(root) else GENESIS_ANCHOR
     try:
+        genesis = root if is_admissible_anchor(root) else _genesis_anchor()
         forest = build_chain_forest(chain, genesis_anchor=genesis)
-    except IdrForestError as exc:
+    except (IdrForestError, ValueError) as exc:
         out["decision_chain"] = Verdict.BROKEN.value
         out["decision_chain_error"] = str(exc)
         return False, None
