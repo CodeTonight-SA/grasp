@@ -101,6 +101,23 @@ class _BodyTooLarge(Exception):
         self.cap = cap
 
 
+class _MalformedContentLength(Exception):
+    """The client declared a ``Content-Length`` that is not a valid
+    non-negative integer. Treating this like an ABSENT header (as
+    ``_read_body`` otherwise does for GET/DELETE with no body) would be
+    wrong: the client most likely DID send framed bytes right after this
+    header, and silently returning an empty body here leaves those real
+    bytes unread on the socket -- the next request on the same persistent
+    connection then misreads them as its own request line (the same
+    request-smuggling / desync shape ``_ChunkedBodyNotSupported`` already
+    guards, just reached via a different malformed header). Raised BEFORE
+    any byte of the body is read."""
+
+    def __init__(self, declared: str) -> None:
+        super().__init__(f"not a valid non-negative integer: {declared!r}")
+        self.declared = declared
+
+
 class _ChunkedBodyNotSupported(Exception):
     """The client declared ``Transfer-Encoding`` -- this proxy does not
     decode a transfer-coded request body. Treating ``Content-Length`` as
@@ -367,6 +384,14 @@ def _session_digest(headers) -> str | None:
     return "sha256:" + hashlib.sha256(sid.encode("utf-8")).hexdigest()
 
 
+class _UnparsableJSONRPCBody(Exception):
+    """A non-empty POST body that fails this proxy's own ``json.loads``.
+    Forwarding it on good faith (as a byte-identical passthrough) would let
+    a more tolerant upstream parser still execute it as a real tool call --
+    one this proxy never recognised as a message, so no intent or outcome
+    is ever sealed for it. Refused instead of silently passed through."""
+
+
 def _jsonrpc_error_obj(msg_id: Any, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32000, "message": message}}
 
@@ -566,7 +591,9 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
         try:
             n = int(length)
         except ValueError:
-            return b""
+            raise _MalformedContentLength(length) from None
+        if n < 0:
+            raise _MalformedContentLength(length)
         cap = _max_body_bytes()
         if n > cap:
             raise _BodyTooLarge(n, cap)
@@ -577,36 +604,20 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
             return False, []
         try:
             parsed = json.loads(body)
-        except json.JSONDecodeError:
-            return False, []
+        except json.JSONDecodeError as exc:
+            raise _UnparsableJSONRPCBody(str(exc)) from None
         return isinstance(parsed, list), _as_messages(parsed)
 
     # -- the main dispatch -----------------------------------------------
 
     def _handle(self, method: str) -> None:
         cfg: ProxyConfig = self.server.seal_config  # type: ignore[attr-defined]
-        try:
-            body = self._read_body()
-        except _BodyTooLarge as exc:
-            # Refuse WITHOUT draining the socket -- the declared bytes were
-            # never read, so force this connection closed rather than risk
-            # a later request on the same keep-alive connection being
-            # misparsed against an undrained body.
-            self.close_connection = True
-            message = (f"request body of {exc.declared} bytes exceeds the "
-                       f"{exc.cap}-byte cap (GRASP_MCP_SEAL_MAX_BODY_BYTES)")
-            self._write_json(413, json.dumps(_jsonrpc_error_obj(None, message)).encode("utf-8"))
-            return
-        except _ChunkedBodyNotSupported:
-            # Same discipline as the cap above: nothing was read from the
-            # socket, so force the connection closed rather than leave a
-            # transfer-coded body this proxy cannot decode sitting unread.
-            self.close_connection = True
-            message = ("this proxy requires Content-Length and does not decode "
-                       "Transfer-Encoding; send the request with Content-Length set")
-            self._write_json(411, json.dumps(_jsonrpc_error_obj(None, message)).encode("utf-8"))
-            return
-        was_batch, messages = self._parse_body(method, body)
+        body = self._read_body_or_refuse()
+        if body is None:
+            return  # already refused -- framing could not be trusted
+        was_batch, messages = self._parse_body_or_refuse(method, body)
+        if messages is None:
+            return  # already refused -- body was not valid JSON
         pending: dict[Any, _PendingCall] = {}
         if method == "POST" and messages:
             pending, refusal = self._seal_intents(cfg, messages)
@@ -622,6 +633,46 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
             self._relay(resp, pending, cfg)
         finally:
             conn.close()
+
+    def _refuse_framing(self, status: int, message: str) -> None:
+        """A request whose framing cannot be trusted: nothing (or not
+        enough) was read from the socket to know where it ends, so the
+        connection is forced closed rather than leave the client's bytes
+        sitting unread for the next request on it to misparse."""
+        self.close_connection = True
+        self._write_json(status, json.dumps(_jsonrpc_error_obj(None, message)).encode("utf-8"))
+
+    def _read_body_or_refuse(self) -> bytes | None:
+        """The request body, or ``None`` once a refusal has already been
+        written -- the three framing defects this proxy cannot safely
+        guess past (an oversize declared length, one that is not a valid
+        non-negative integer, or a transfer-coded body it does not
+        decode)."""
+        try:
+            return self._read_body()
+        except _BodyTooLarge as exc:
+            self._refuse_framing(413, f"request body of {exc.declared} bytes exceeds the "
+                                       f"{exc.cap}-byte cap (GRASP_MCP_SEAL_MAX_BODY_BYTES)")
+        except _MalformedContentLength as exc:
+            self._refuse_framing(
+                400, f"Content-Length is not a valid non-negative integer: {exc.declared!r}")
+        except _ChunkedBodyNotSupported:
+            self._refuse_framing(411, "this proxy requires Content-Length and does not decode "
+                                       "Transfer-Encoding; send the request with Content-Length set")
+        return None
+
+    def _parse_body_or_refuse(self, method: str, body: bytes) -> tuple[bool, list[dict] | None]:
+        """(was_batch, messages), or (False, None) once a refusal has
+        already been written. The body was already fully read by this
+        point, so a refusal here does not desync the connection -- it is
+        refused because forwarding it unseen would mean trusting a
+        possibly more lenient upstream not to execute it unsealed."""
+        try:
+            return self._parse_body(method, body)
+        except _UnparsableJSONRPCBody as exc:
+            message = f"request body is not valid JSON: {exc}"
+            self._write_json(400, json.dumps(_jsonrpc_error_obj(None, message)).encode("utf-8"))
+            return False, None
 
     def _write_json(self, status: int, body: bytes) -> None:
         self.send_response(status)

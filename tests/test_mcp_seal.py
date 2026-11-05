@@ -171,6 +171,30 @@ class _CallCountingUpstream(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class _LenientUpstream(http.server.BaseHTTPRequestHandler):
+    """Executes every POST as a tool call regardless of whether the body is
+    strictly valid JSON -- models an upstream whose own parser is more
+    tolerant than this proxy's ``json.loads``. Records a call count so a
+    test can prove whether a given body reached it at all."""
+
+    calls = 0
+
+    def do_POST(self):  # noqa: N802
+        type(self).calls += 1
+        length = int(self.headers.get("Content-Length") or 0)
+        self.rfile.read(length) if length else b""
+        out = json.dumps({"jsonrpc": "2.0", "id": 1,
+                          "result": {"content": [], "isError": False}}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):  # noqa: D102
+        pass
+
+
 class _BigReplyUpstream(http.server.BaseHTTPRequestHandler):
     """A plain (non-SSE) JSON reply padded well past a small test cap -- the
     oversized-buffered-response probe (the response-side twin of the
@@ -604,6 +628,91 @@ def test_chunked_request_body_is_refused_not_silently_dropped(tmp_path):
     assert _CallCountingUpstream.calls == 0, "the undecoded chunked call must never reach upstream"
     out = m.verify_seal_chain(home)
     assert out["records"] == 0, "nothing can be honestly sealed for a body this proxy never read"
+
+
+# ---------------------------------------------------------------------------
+# Content-Length that is not a valid non-negative integer: refused cleanly,
+# never silently treated as "no body" while the real bytes stay unread
+# ---------------------------------------------------------------------------
+
+def test_malformed_content_length_is_refused_not_silently_emptied(tmp_path):
+    """A Content-Length header that fails int() (or parses negative) must
+    not be treated like an absent header: the client likely DID send framed
+    bytes right after it, and silently returning an empty body here leaves
+    those real bytes unread on the socket -- the same request-smuggling /
+    desync shape _ChunkedBodyNotSupported already guards, just reached via a
+    different malformed header instead of Transfer-Encoding."""
+    home = tmp_path / "home"
+    _CallCountingUpstream.calls = 0
+    body = json.dumps(_tool_call(1)).encode("utf-8")
+    with _running(_CallCountingUpstream, home) as port:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        sock.connect((HOST, port))
+        sock.sendall(
+            f"POST /mcp HTTP/1.1\r\nHost: {HOST}:{port}\r\n"
+            f"Content-Type: application/json\r\nContent-Length: notanumber\r\n\r\n"
+            .encode("utf-8") + body
+        )
+        reply = sock.recv(65536)
+        sock.close()
+    status_line = reply.split(b"\r\n", 1)[0]
+    assert b"400" in status_line, f"expected 400 Bad Request, got {status_line!r}"
+    assert _CallCountingUpstream.calls == 0, (
+        "a request this proxy cannot frame must never reach upstream"
+    )
+    out = m.verify_seal_chain(home)
+    assert out["records"] == 0, "nothing can be honestly sealed for a body this proxy never read"
+
+
+def test_negative_content_length_is_refused_not_silently_emptied(tmp_path):
+    """A negative Content-Length parses fine as an int but hits the same
+    ``n > 0 else b""`` branch as a genuinely absent body -- the real bytes
+    sent after it are left unread exactly like the non-numeric case."""
+    home = tmp_path / "home"
+    _CallCountingUpstream.calls = 0
+    body = json.dumps(_tool_call(1)).encode("utf-8")
+    with _running(_CallCountingUpstream, home) as port:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        sock.connect((HOST, port))
+        sock.sendall(
+            f"POST /mcp HTTP/1.1\r\nHost: {HOST}:{port}\r\n"
+            f"Content-Type: application/json\r\nContent-Length: -5\r\n\r\n"
+            .encode("utf-8") + body
+        )
+        reply = sock.recv(65536)
+        sock.close()
+    status_line = reply.split(b"\r\n", 1)[0]
+    assert b"400" in status_line, f"expected 400 Bad Request, got {status_line!r}"
+    assert _CallCountingUpstream.calls == 0
+    out = m.verify_seal_chain(home)
+    assert out["records"] == 0
+
+
+# ---------------------------------------------------------------------------
+# A POST body that fails this proxy's own JSON parse: refused, never
+# forwarded on good faith to a possibly more tolerant upstream
+# ---------------------------------------------------------------------------
+
+def test_unparseable_json_body_is_refused_not_silently_unsealed(tmp_path):
+    """The module promises every forwarded tools/call is sealed. A body that
+    fails this proxy's own json.loads must not be forwarded anyway -- a more
+    tolerant upstream parser could still execute it as a real tool call with
+    no intent or outcome ever recorded for it."""
+    home = tmp_path / "home"
+    _LenientUpstream.calls = 0
+    malformed = b'{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {},}'  # trailing comma
+    with _running(_LenientUpstream, home) as port:
+        conn = http.client.HTTPConnection(HOST, port, timeout=5)
+        conn.request("POST", "/mcp", body=malformed, headers={"Content-Type": "application/json"})
+        resp = conn.getresponse()
+        data = resp.read()
+        conn.close()
+    assert resp.status != 200, f"a body this proxy cannot parse must be refused, got {resp.status}"
+    assert _LenientUpstream.calls == 0, "an unparseable body must never reach a possibly-lenient upstream"
+    out = m.verify_seal_chain(home)
+    assert out["records"] == 0
 
 
 # ---------------------------------------------------------------------------
