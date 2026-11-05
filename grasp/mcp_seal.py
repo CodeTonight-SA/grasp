@@ -856,10 +856,30 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
             sealed = self._seal_one_intent(cfg, message, session_digest)
             if sealed is None and cfg.on_seal_failure == "refuse" and \
                     message.get("method") == "tools/call":
+                self._abandon_sealed_intents(cfg, pending)
                 return {}, "refusing -- intent could not be sealed"
             if sealed is not None and "id" in message:
                 pending[message["id"]] = sealed
         return pending, None
+
+    def _abandon_sealed_intents(self, cfg: ProxyConfig, pending: dict[Any, _PendingCall]) -> None:
+        """Close out every intent already durably sealed earlier in THIS
+        batch, right before refusing it for a LATER message's seal failure.
+        Without this, an earlier intent sits in the ledger with no outcome
+        and no way to ever get one (the batch it belonged to was never
+        forwarded) -- indistinguishable from a call that really reached the
+        upstream but whose outcome this proxy merely failed to observe, when
+        the true state is that it never left the proxy at all."""
+        for call in pending.values():
+            try:
+                cfg.chain.seal_outcome(
+                    intent=call.intent, tool=call.tool,
+                    payload={"abandoned": "batch refused before forwarding"}, is_error=True,
+                    duration_s=time.monotonic() - call.started,
+                    session_digest=call.session_digest, jsonrpc_id=call.jsonrpc_id,
+                )
+            except OSError as exc:
+                _log_failure(cfg.chain.home, "outcome", f"{call.tool}: {exc}")
 
     def _seal_one_intent(self, cfg: ProxyConfig, message: dict,
                           session_digest: str | None) -> _PendingCall | None:

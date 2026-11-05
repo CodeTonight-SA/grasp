@@ -612,6 +612,43 @@ def test_pass_on_seal_failure_still_forwards_and_logs(tmp_path):
     assert json.loads(failures[0])["phase"] == "intent"
 
 
+def test_batch_earlier_sealed_intent_is_not_stranded_by_a_later_seal_failure(tmp_path, monkeypatch):
+    """The sibling of ``test_batch_earlier_valid_call_is_not_stranded_by_a_
+    later_non_scalar_id``, for a different refusal cause: a batch of two
+    ``tools/call`` messages where the FIRST seals successfully (durably
+    appended to the ledger) and the SECOND's ``seal_intent`` then raises
+    ``OSError`` (e.g. disk full on the second write, not the first). With
+    ``--on-seal-failure refuse`` the whole batch must be refused and never
+    forwarded -- but the first message's intent is already durably on the
+    ledger by the time the second message's failure is discovered, and
+    nothing before this fix closed it out. Left alone it sits in
+    ``verify``'s ``unsettled`` list forever, indistinguishable from a call
+    that really reached the upstream but whose outcome merely went
+    unobserved -- when in truth this one never left the proxy at all."""
+    home = tmp_path / "home"
+    _CallCountingUpstream.calls = 0
+    real_append_idr = m.append_idr
+    seen = {"n": 0}
+
+    def _flaky_append(idr, *, path):
+        seen["n"] += 1
+        if seen["n"] == 2:
+            raise OSError("disk full (simulated)")
+        return real_append_idr(idr, path=path)
+
+    monkeypatch.setattr(m, "append_idr", _flaky_append)
+    batch = [_tool_call(1, name="first"), _tool_call(2, name="second")]
+    with _running(_CallCountingUpstream, home, on_seal_failure="refuse") as port:
+        status, _, data = _post(port, batch)
+    assert status == 200
+    assert _CallCountingUpstream.calls == 0, "a refused batch must never reach upstream"
+    out = m.verify_seal_chain(home)
+    assert out["unsettled"] == [], (
+        "the first message's intent must not be left dangling when the batch "
+        "is refused for the second message's seal failure"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Header passthrough (both directions)
 # ---------------------------------------------------------------------------
