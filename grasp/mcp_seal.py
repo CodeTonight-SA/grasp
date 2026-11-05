@@ -55,16 +55,55 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from grasp.idr import PrecogIDR, _canonical_json, append_idr, build_idr, read_idr_chain
-from grasp.idr_forest import IdrForestError, build_chain_forest, verify_chain_integrity
+from grasp.idr_forest import (
+    EXOGENOUS_ANCHOR_PATTERNS,
+    IdrForestError,
+    build_chain_forest,
+    is_admissible_anchor,
+    verify_chain_integrity,
+)
 from grasp.verdict import Verdict
 
 SERVER_NAME = "grasp-mcp-seal"
 SERVER_VERSION = "0.1.0"
 
-#: Exogenous genesis for a fresh seal chain. Honest about what started it: the
-#: sidecar process, not a specific human -- mirrors grasp.mcp_server's own
-#: ``human:mcp-operator`` convention (the "human:" admissible-anchor class).
-GENESIS_ANCHOR = "human:mcp-seal-sidecar"
+#: Default exogenous genesis for a fresh seal chain -- used when
+#: GRASP_MCP_SEAL_GENESIS_ANCHOR is unset. NOT a claim that a human started
+#: this process: the sidecar is typically one shared, long-lived daemon
+#: serving many callers over time, so no single one of them "started" it
+#: (mirrors grasp.mcp_server's own ``human:mcp-operator`` placeholder and its
+#: ``GRASP_GENESIS_ANCHOR`` override -- see ``_genesis_anchor`` below).
+_GENESIS_ANCHOR_DEFAULT = "human:mcp-seal-sidecar"
+
+
+def _genesis_anchor() -> str:
+    """The exogenous genesis anchor for a fresh seal chain.
+
+    ``GRASP_MCP_SEAL_GENESIS_ANCHOR`` overrides the placeholder default: set
+    it to the admissible anchor this deployment actually roots at --
+    ``human:<id>`` for a named operator, ``ci:<id>`` for an automated
+    pipeline, ``council:<id>`` for a cross-provider verdict, ``hypo:<id>``
+    for a pre-registered hypothesis (see
+    :data:`grasp.idr_forest.EXOGENOUS_ANCHOR_PATTERNS`). An override matching
+    none of those is rejected: silently widening the genesis to an
+    inadmissible value would corrupt the guarantee exogenous anchoring
+    exists to provide, not just this one record. A component-scoped name
+    (not the bare ``GRASP_GENESIS_ANCHOR``) because this chain is a separate
+    deployment from ``grasp.mcp_server``'s decision ledger and may need a
+    separate root, mirroring this module's own
+    ``GRASP_MCP_SEAL_MAX_BODY_BYTES`` / ``GRASP_MCP_SEAL_MAX_RESPONSE_BYTES``
+    naming convention.
+    """
+    override = os.environ.get("GRASP_MCP_SEAL_GENESIS_ANCHOR", "").strip()
+    if not override:
+        return _GENESIS_ANCHOR_DEFAULT
+    if not is_admissible_anchor(override):
+        raise ValueError(
+            f"GRASP_MCP_SEAL_GENESIS_ANCHOR={override!r} is not an admissible "
+            f"exogenous anchor (expected one of {EXOGENOUS_ANCHOR_PATTERNS!r} "
+            "as a prefix)"
+        )
+    return override
 
 #: Hop-by-hop headers (RFC 7230 6.1) plus Host/Content-Length -- the proxy
 #: computes both of those itself for the fixed upstream, so neither the
@@ -294,6 +333,11 @@ class SealChain:
         self.home = home
         self.home.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        # Resolved and validated ONCE, at construction -- so a typo'd
+        # GRASP_MCP_SEAL_GENESIS_ANCHOR fails loud at startup (the caller's
+        # existing config-error handling, e.g. _cmd_serve's `except
+        # ValueError`), never silently inside a per-request seal_intent call.
+        self._genesis = _genesis_anchor()
 
     @property
     def ledger_path(self) -> Path:
@@ -302,7 +346,7 @@ class SealChain:
     def _head(self) -> tuple[str, int]:
         chain = read_idr_chain(path=self.ledger_path)
         if not chain:
-            return GENESIS_ANCHOR, 0
+            return self._genesis, 0
         last = chain[-1]
         return last.id, last.depth + 1
 
@@ -913,8 +957,8 @@ def verify_seal_chain(home: Path) -> dict:
         out.update(chain_verdict="empty", unsettled=[], ok=True)
         return out
     try:
-        forest = build_chain_forest(chain, genesis_anchor=GENESIS_ANCHOR)
-    except IdrForestError as exc:
+        forest = build_chain_forest(chain, genesis_anchor=_genesis_anchor())
+    except (IdrForestError, ValueError) as exc:
         out.update(chain_verdict=Verdict.BROKEN.value, chain_error=str(exc), unsettled=[], ok=False)
         return out
     verdict = verify_chain_integrity(forest)

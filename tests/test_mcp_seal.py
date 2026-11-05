@@ -1096,6 +1096,73 @@ def test_drill_with_no_chain_says_so_and_does_not_crash(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# GENESIS_ANCHOR: overridable per deployment, mirroring grasp.mcp_server's
+# own GRASP_GENESIS_ANCHOR convention for exactly the same reason -- a
+# long-lived shared sidecar is not a human, so the placeholder default must
+# be nameable as whatever this deployment really roots at.
+# ---------------------------------------------------------------------------
+
+def test_genesis_anchor_defaults_to_the_placeholder(monkeypatch):
+    monkeypatch.delenv("GRASP_MCP_SEAL_GENESIS_ANCHOR", raising=False)
+    assert m._genesis_anchor() == "human:mcp-seal-sidecar"
+
+
+def test_genesis_anchor_override_accepts_every_admissible_class(monkeypatch):
+    for value in ("human:alice", "ci:nightly-42", "council:verdict-7", "hypo:H042"):
+        monkeypatch.setenv("GRASP_MCP_SEAL_GENESIS_ANCHOR", value)
+        assert m._genesis_anchor() == value
+
+
+def test_genesis_anchor_override_rejects_an_inadmissible_value(monkeypatch):
+    monkeypatch.setenv("GRASP_MCP_SEAL_GENESIS_ANCHOR", "operator-42")
+    try:
+        m._genesis_anchor()
+        raised = False
+    except ValueError as exc:
+        raised = True
+        assert "GRASP_MCP_SEAL_GENESIS_ANCHOR" in str(exc)
+    assert raised, "an inadmissible override must be rejected, not silently accepted"
+
+
+def test_seal_chain_construction_fails_fast_on_an_inadmissible_override(tmp_path, monkeypatch):
+    """Validated at construction (startup), not lazily inside a per-request
+    seal -- a typo'd override must refuse every call forever rather than
+    fail loud once at serve time."""
+    monkeypatch.setenv("GRASP_MCP_SEAL_GENESIS_ANCHOR", "not-a-prefix")
+    try:
+        m.SealChain(tmp_path / "home")
+        raised = False
+    except ValueError:
+        raised = True
+    assert raised, "SealChain must refuse to construct with an inadmissible genesis override"
+
+
+def test_sealed_intent_uses_an_admissible_genesis_override(tmp_path, monkeypatch):
+    """The override must actually reach the ledger, not just validate and do
+    nothing -- a dead override is as wrong as no override at all."""
+    monkeypatch.setenv("GRASP_MCP_SEAL_GENESIS_ANCHOR", "ci:nightly-seal-42")
+    home = tmp_path / "home"
+    with _running(_JsonEchoUpstream, home) as port:
+        _post(port, _tool_call(1))
+    rows = _read_raw(home)
+    assert rows[0]["predecessor_idr"] == "ci:nightly-seal-42"
+
+
+def test_verify_seal_chain_reports_broken_when_override_is_inadmissible(tmp_path, monkeypatch):
+    """Must surface as a clean BROKEN verdict -- never an uncaught exception
+    escaping grasp-mcp-seal verify (mirrors grasp.mcp_server's own
+    _verify_decision_chain behaviour for the identical failure shape)."""
+    home = tmp_path / "home"
+    with _running(_JsonEchoUpstream, home) as port:
+        _post(port, _tool_call(1))
+    monkeypatch.setenv("GRASP_MCP_SEAL_GENESIS_ANCHOR", "not-a-prefix")
+    out = m.verify_seal_chain(home)
+    assert out["ok"] is False
+    assert out["chain_verdict"] == "broken"
+    assert "GRASP_MCP_SEAL_GENESIS_ANCHOR" in out["chain_error"]
+
+
+# ---------------------------------------------------------------------------
 # The doc's own examples must not refuse against this proxy's own defaults
 # ---------------------------------------------------------------------------
 
