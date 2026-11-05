@@ -125,6 +125,54 @@ def _max_body_bytes() -> int:
     return value if value >= 0 else _DEFAULT_MAX_BODY_BYTES
 
 
+#: Cap on a BUFFERED (non-SSE) upstream response this proxy will hold in
+#: memory before relaying it -- the response-side twin of
+#: GRASP_MCP_SEAL_MAX_BODY_BYTES above. A buffered reply must be read whole
+#: (to compute Content-Length for the client and to find the JSON-RPC ids to
+#: seal), so with no cap a single oversized upstream reply is an unbounded
+#: memory-allocation vector on this side too, asymmetric with the capped
+#: request side. Overridable via GRASP_MCP_SEAL_MAX_RESPONSE_BYTES.
+_DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024  # 64 MiB
+
+
+def _max_response_bytes() -> int:
+    raw = os.environ.get("GRASP_MCP_SEAL_MAX_RESPONSE_BYTES", "").strip()
+    if not raw:
+        return _DEFAULT_MAX_RESPONSE_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_MAX_RESPONSE_BYTES
+    return value if value >= 0 else _DEFAULT_MAX_RESPONSE_BYTES
+
+
+class _UpstreamResponseTooLarge(Exception):
+    """A buffered (non-SSE) upstream response exceeded the configured cap
+    before it finished -- raised before anything is sent to the client, so
+    this becomes a clean refusal rather than a half-written reply."""
+
+    def __init__(self, read: int, cap: int) -> None:
+        super().__init__(f"read over {read} bytes, cap {cap}")
+        self.read = read
+        self.cap = cap
+
+
+def _read_capped(resp: http.client.HTTPResponse, cap: int) -> bytes:
+    """Read a response body incrementally (never one unbounded ``.read()``),
+    raising once the running total exceeds ``cap`` -- before anything has
+    been sent to the client, so the caller can still refuse cleanly."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = resp.read1(READ_CHUNK)
+        if not chunk:
+            return b"".join(chunks)
+        total += len(chunk)
+        if total > cap:
+            raise _UpstreamResponseTooLarge(total, cap)
+        chunks.append(chunk)
+
+
 # ---------------------------------------------------------------------------
 # Paths, commitments, openings, failures
 # ---------------------------------------------------------------------------
@@ -419,15 +467,29 @@ def _connect(cfg: ProxyConfig) -> http.client.HTTPConnection:
     return cls(cfg.upstream_host, cfg.upstream_port, timeout=30)
 
 
+def _connection_listed_headers(value: str | None) -> frozenset[str]:
+    """RFC 7230 S6.1: a header NAMED inside a ``Connection`` field's value is
+    hop-by-hop for THAT connection specifically, on top of the fixed
+    HOP_BY_HOP set -- it must not be forwarded to the next hop either, or a
+    caller/upstream can smuggle an arbitrary header past the static list by
+    naming it in ``Connection`` (e.g. ``Connection: x-smuggle`` plus an
+    ``X-Smuggle`` header of its own)."""
+    if not value:
+        return frozenset()
+    return frozenset(tok.strip().lower() for tok in value.split(",") if tok.strip())
+
+
 def _forward_headers(headers) -> list[tuple[str, str]]:
-    """Every header the client sent, minus HOP_BY_HOP -- as a LIST of pairs,
-    not a dict, so a repeated header name (two ``Cookie`` lines, say -- legal
-    HTTP, however unusual) keeps every value. A dict would silently collapse
-    to the last one, dropping the rest. No allowlist: a reverse proxy that
-    only forwards headers it recognises breaks on the first header it does
-    not -- Authorization/Mcp-Session-Id/Accept all pass through simply
-    because they are not hop-by-hop, same as anything else."""
-    return [(name, value) for name, value in headers.items() if name.lower() not in HOP_BY_HOP]
+    """Every header the client sent, minus HOP_BY_HOP and anything the
+    client's own Connection header lists -- as a LIST of pairs, not a dict,
+    so a repeated header name (two ``Cookie`` lines, say -- legal HTTP,
+    however unusual) keeps every value. A dict would silently collapse to
+    the last one, dropping the rest. No allowlist: a reverse proxy that only
+    forwards headers it recognises breaks on the first header it does not --
+    Authorization/Mcp-Session-Id/Accept all pass through simply because they
+    are not hop-by-hop, same as anything else."""
+    drop = HOP_BY_HOP | _connection_listed_headers(headers.get("Connection"))
+    return [(name, value) for name, value in headers.items() if name.lower() not in drop]
 
 
 def _forward(cfg: ProxyConfig, method: str, path: str, headers: list[tuple[str, str]],
@@ -611,12 +673,21 @@ class _SealHandler(http.server.BaseHTTPRequestHandler):
             self._relay_buffered(resp, pending, cfg)
 
     def _copy_response_headers(self, resp: http.client.HTTPResponse) -> None:
+        drop = HOP_BY_HOP | _connection_listed_headers(resp.getheader("Connection"))
         for name, value in resp.getheaders():
-            if name.lower() not in HOP_BY_HOP:
+            if name.lower() not in drop:
                 self.send_header(name, value)
 
     def _relay_buffered(self, resp: http.client.HTTPResponse, pending: dict, cfg: ProxyConfig) -> None:
-        data = resp.read()
+        try:
+            data = _read_capped(resp, _max_response_bytes())
+        except _UpstreamResponseTooLarge as exc:
+            # Nothing has been sent to the client yet -- refuse cleanly
+            # instead of buffering an unbounded upstream reply.
+            message = (f"upstream response of over {exc.read} bytes exceeds the "
+                       f"{exc.cap}-byte cap (GRASP_MCP_SEAL_MAX_RESPONSE_BYTES)")
+            self._write_json(502, json.dumps(_jsonrpc_error_obj(None, message)).encode("utf-8"))
+            return
         self.send_response(resp.status)
         self._copy_response_headers(resp)
         if not _forbids_content_length(resp.status):

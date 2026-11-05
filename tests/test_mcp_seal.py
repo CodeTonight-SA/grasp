@@ -171,6 +171,28 @@ class _CallCountingUpstream(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class _BigReplyUpstream(http.server.BaseHTTPRequestHandler):
+    """A plain (non-SSE) JSON reply padded well past a small test cap -- the
+    oversized-buffered-response probe (the response-side twin of the
+    declared-Content-Length-cap test on the request side)."""
+
+    PAD = "x" * 2048
+
+    def do_POST(self):  # noqa: N802
+        length = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(length)) if length else {}
+        out = json.dumps({"jsonrpc": "2.0", "id": body.get("id"),
+                          "result": {"content": [], "isError": False, "pad": self.PAD}}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):  # noqa: D102
+        pass
+
+
 class _SSEBatchArrayUpstream(http.server.BaseHTTPRequestHandler):
     """A batch of tools/call replied to with ONE SSE event whose ``data:``
     is a JSON ARRAY of every response -- a legal JSON-RPC batch reply, just
@@ -205,6 +227,28 @@ class _DuplicateHeaderUpstream(http.server.BaseHTTPRequestHandler):
         type(self).seen_dup = self.headers.get_all("X-Dup") or []
         parsed = json.loads(body) if body else {}
         out = json.dumps({"jsonrpc": "2.0", "id": parsed.get("id"),
+                          "result": {"content": [], "isError": False}}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):  # noqa: D102
+        pass
+
+
+class _HeaderEchoUpstream(http.server.BaseHTTPRequestHandler):
+    """Records every request header it actually received, exact name case --
+    the probe for Connection-listed hop-by-hop stripping (RFC 7230 S6.1)."""
+
+    seen_headers: dict = {}
+
+    def do_POST(self):  # noqa: N802
+        length = int(self.headers.get("Content-Length") or 0)
+        self.rfile.read(length) if length else b""
+        type(self).seen_headers = dict(self.headers.items())
+        out = json.dumps({"jsonrpc": "2.0", "id": None,
                           "result": {"content": [], "isError": False}}).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -468,6 +512,32 @@ def test_duplicate_request_headers_are_not_collapsed(tmp_path):
     assert _DuplicateHeaderUpstream.seen_dup == ["first", "second"]
 
 
+def test_connection_listed_header_is_stripped_from_forward(tmp_path):
+    """RFC 7230 S6.1: a header NAMED inside the Connection field's value is
+    hop-by-hop for THIS connection and must not be forwarded to the next hop
+    -- even when its own name is not in the fixed HOP_BY_HOP set. Naming an
+    arbitrary header in Connection must not be a way to smuggle it past the
+    static list."""
+    home = tmp_path / "home"
+    _HeaderEchoUpstream.seen_headers = {}
+    body = json.dumps(_tool_call(1)).encode("utf-8")
+    with _running(_HeaderEchoUpstream, home) as port:
+        conn = http.client.HTTPConnection(HOST, port, timeout=5)
+        conn.putrequest("POST", "/mcp")
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", str(len(body)))
+        conn.putheader("Connection", "x-smuggle")
+        conn.putheader("X-Smuggle", "evil")
+        conn.endheaders(body)
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+    assert resp.status == 200
+    assert "X-Smuggle" not in _HeaderEchoUpstream.seen_headers, (
+        "a header named in Connection must be stripped, not forwarded to upstream"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Request body cap -- a declared Content-Length past the cap is refused
 # BEFORE a single byte is read from the socket (resource-exhaustion probe)
@@ -672,6 +742,27 @@ def test_204_response_carries_no_content_length(tmp_path):
     assert "Content-Length" not in headers, (
         "RFC 9110 SS8.6: a 204 response MUST NOT carry Content-Length"
     )
+
+
+# ---------------------------------------------------------------------------
+# A buffered (non-SSE) upstream reply far past a configured cap: refused
+# before anything is sent to the client, not buffered without bound
+# ---------------------------------------------------------------------------
+
+def test_oversized_buffered_response_is_refused_before_any_read(tmp_path, monkeypatch):
+    """The request side refuses a declared-oversize body before reading a
+    byte (GRASP_MCP_SEAL_MAX_BODY_BYTES). The response side had no such cap:
+    a non-SSE reply is read whole via resp.read() with no limit at all --
+    the asymmetric half of the same resource-exhaustion vector."""
+    monkeypatch.setenv("GRASP_MCP_SEAL_MAX_RESPONSE_BYTES", "256")
+    home = tmp_path / "home"
+    with _running(_BigReplyUpstream, home) as port:
+        status, _, data = _post(port, _tool_call(1))
+    assert status == 502, f"expected a clean refusal, got {status}"
+    assert "exceeds" in json.loads(data)["error"]["message"]
+    out = m.verify_seal_chain(home)
+    assert out["records"] == 1, "the intent was sealed before forwarding; the oversized reply is refused"
+    assert len(out["unsettled"]) == 1
 
 
 # ---------------------------------------------------------------------------
