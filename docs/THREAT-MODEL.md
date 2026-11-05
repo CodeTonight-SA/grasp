@@ -152,6 +152,38 @@ docstring says what it is: not tamper-evident. ``grasp verify --strict`` (or
 per-scheme histogram naming exactly which records a migration must replace —
 the F4 gate for deployments leaving the placeholder scheme behind.
 
+## The MCP server's own surface
+
+The table above is about the **signed ledger**. `grasp-mcp` (the MCP server,
+``grasp/mcp_server.py``) has a second, separate surface worth naming: what a
+connected caller can make the *server process itself* do, independent of
+what it later writes to the ledger.
+
+- **`source_path` confinement.** `grasp_prove_claim` accepts either
+  `source_text` (content supplied directly) or `source_path` (a path the
+  server process opens). On stdio, with one trusted local caller, this is
+  harmless. Reachable over a network bridge
+  ([`docs/install/claude-for-work.md`](install/claude-for-work.md)), an
+  unconfined `source_path` gives any connected caller a read oracle over
+  files the process can reach, and opening the wrong kind of path can hang
+  the process or exhaust its memory. `source_path` is now off unless
+  `GRASP_SOURCE_ROOTS` names the directories the bridge may read from, a
+  path is resolved and checked against those roots before anything is
+  opened, and only a regular file under `GRASP_SOURCE_MAX_BYTES` is ever
+  read. A refusal carries no hash, no offsets, and the same message
+  whether or not the named path exists.
+- **The genesis anchor on a shared process.** The decision chain's genesis
+  anchor defaulted to a placeholder claiming a human started the session —
+  true for one interactive stdio run, not for a long-lived bridge process
+  serving many callers over time. `GRASP_GENESIS_ANCHOR` lets a deployment
+  declare the real anchor it roots at, checked against the same admissible
+  classes the ledger itself uses (`ci:` / `human:` / `council:` / `hypo:`).
+
+Neither of these is a ledger-tamper attack — the signed records this page is
+about are unaffected either way. They are the boundary of what a *reachable
+server process* should be trusted to do, which matters the moment
+`grasp-mcp` sits behind anything other than stdio and one local caller.
+
 ## What a GRASP record proves
 
 Calibrated positive claims — each one is what the arithmetic checks, nothing
