@@ -240,7 +240,7 @@ pipx install "git+https://github.com/CodeTonight-SA/grasp"   # puts grasp-mcp on
 
 | Host | Install | Guide |
 |---|---|---|
-| Claude Code | `claude plugin marketplace add CodeTonight-SA/grasp` then `claude plugin install grasp@CodeTonight-SA/grasp` | [docs/install/claude-code.md](docs/install/claude-code.md) |
+| Claude Code | `claude plugin marketplace add CodeTonight-SA/grasp` then `claude plugin install grasp@grasp` | [docs/install/claude-code.md](docs/install/claude-code.md) |
 | Gemini CLI | `gemini extensions install https://github.com/CodeTonight-SA/grasp` | [docs/install/gemini-cli.md](docs/install/gemini-cli.md) |
 | Antigravity (`agy`) | `agy plugin install https://github.com/CodeTonight-SA/grasp` | [docs/install/antigravity.md](docs/install/antigravity.md) |
 | Claude Desktop | one `mcpServers` entry in `claude_desktop_config.json` | [docs/install/claude-desktop.md](docs/install/claude-desktop.md) |
