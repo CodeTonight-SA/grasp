@@ -17,7 +17,7 @@ pipx install "git+https://github.com/CodeTonight-SA/grasp"
 
 ```bash
 claude plugin marketplace add CodeTonight-SA/grasp
-claude plugin install grasp@CodeTonight-SA/grasp
+claude plugin install grasp@grasp
 ```
 
 That registers:
