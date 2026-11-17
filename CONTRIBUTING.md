@@ -44,11 +44,12 @@ header, byte-for-byte:
 The one exception is the stand-alone receipt verifier,
 `tools/grasp-verify-receipt`, which is **Apache-2.0** (see
 `LICENSES/Apache-2.0.txt`). A contribution to that file is licensed under
-Apache-2.0, and the file carries this header after its shebang line instead:
+Apache-2.0. The SPDX header after the file's shebang line is the authoritative
+marker of its licence:
 
 ```python
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (C) 2026 CodeTonight SA
+# Copyright (C) 2026 CodeTonight (Pty) Ltd
 ```
 
 ## Code expectations
