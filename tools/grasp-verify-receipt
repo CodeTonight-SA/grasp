@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026 CodeTonight SA
 """grasp-verify-receipt — independently re-verify a GRASP claims receipt.
 
 Answers the AGORA council's deferred suggestion on the Sentient application

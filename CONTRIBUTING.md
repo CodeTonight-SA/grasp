@@ -41,6 +41,16 @@ header, byte-for-byte:
 
 (YAML and Markdown files do not carry the header.)
 
+The one exception is the stand-alone receipt verifier,
+`tools/grasp-verify-receipt`, which is **Apache-2.0** (see
+`LICENSES/Apache-2.0.txt`). A contribution to that file is licensed under
+Apache-2.0, and the file carries this header after its shebang line instead:
+
+```python
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026 CodeTonight SA
+```
+
 ## Code expectations
 
 - **No stubs.** Every symbol you add is fully implemented. A hollow

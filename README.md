@@ -24,14 +24,15 @@ GRASP is the **open proof layer** of a wider stack. The position is open-core:
 
 | Piece | What it is | Licence |
 |---|---|---|
-| **GRASP** (this repo) | The proof layer — the reference implementation of cryptographic causation (signed decision chain, signed memory chain, deterministic citation floor). | **AGPL-3.0-only** — open |
-| **HAPPI** | The open protocol the stack speaks — a specification, not a black box. GRASP's `cite.verify` is pinned byte-compatible to the HAPPI `cite.verify` verb (happi/1.3). | Open standard ([happi.md](https://happi.md)) |
+| **GRASP** (this repo) | The proof layer — the reference implementation of cryptographic causation (signed decision chain, signed memory chain, deterministic citation floor). | **AGPL-3.0-only** -- open; the stand-alone receipt verifier `tools/grasp-verify-receipt` is **Apache-2.0** |
+| **HAPPI** | The open protocol the stack speaks — a specification, not a black box. GRASP's `cite.verify` is pinned byte-compatible to the HAPPI `cite.verify` verb (happi/1.3). | **Apache-2.0** -- open standard ([happi.md](https://happi.md)), with its SDKs and conformance suite |
 | **GRIP + HAL** | The reasoning + provenance engine (GRIP) and the LLM-agnostic multi-provider substrate (HAL). Not required to produce *or* verify a GRASP record. | Licensed / private |
 
 The load-bearing consequence for anyone relying on a record: **GRASP records are
 produced and re-verified by this open package alone** — no GRIP runtime, no HAL,
 no network, no account (see *Verify a receipt* below). The engine is licensed;
-the tool that lets a skeptic check its work is not. Deeds, not words.
+the tool that lets a skeptic check its work is not: `tools/grasp-verify-receipt`
+is Apache-2.0, so anyone may embed it in any product. Deeds, not words.
 
 ## What is in the box
 
@@ -508,13 +509,19 @@ and a copy-paste verification snippet.
 
 ## Licence
 
-**AGPL-3.0-only** (see `LICENSE`). A provenance floor earns trust only if the
-verifier itself is inspectable — anyone relying on a GRASP record must be able
-to read, run, and modify the exact code that produced and verifies it, including
-when it is offered as a network service. Copyleft keeps that loop closed.
+GRASP is **AGPL-3.0-only** (see `LICENSE`), with one exception: the
+stand-alone receipt verifier, `tools/grasp-verify-receipt`, is **Apache-2.0**
+(see `LICENSES/Apache-2.0.txt`).
+
+The split is deliberate. Anyone relying on a GRASP record must be able to read,
+run and modify the exact code that produced it, including when that code is
+offered as a network service, and copyleft keeps that loop closed. Checking a
+record must carry no obligation at all, so the verifier is permissive: anyone
+may embed it in any product, open or closed source.
 
 **Commercial licences.** If the AGPL's network-use obligation does not fit your
-deployment, a commercial licence is available — contact licensing@codetonight.co.za.
+deployment, a commercial licence for the engine is available from
+licensing@codetonight.co.za.
 
 Copyright (C) 2024-2026 Lourens Cornelius Scheepers / CodeTonight (Pty) Ltd.
 
