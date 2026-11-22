@@ -1,7 +1,5 @@
 # GRASP — Governed Reasoning And Signable Provenance
 
-[![CI](https://github.com/CodeTonight-SA/grasp/actions/workflows/ci.yml/badge.svg)](https://github.com/CodeTonight-SA/grasp/actions/workflows/ci.yml)
-
 **Try it in your browser:** <https://grasp.codetonight.co.za>
 
 **Reference implementation of cryptographic causation for AI systems.**
@@ -26,7 +24,7 @@ GRASP is the **open proof layer** of a wider stack. The position is open-core:
 |---|---|---|
 | **GRASP** (this repo) | The proof layer — the reference implementation of cryptographic causation (signed decision chain, signed memory chain, deterministic citation floor). | **AGPL-3.0-only** -- open; the stand-alone receipt verifier `tools/grasp-verify-receipt` is **Apache-2.0** |
 | **HAPPI** | The open protocol the stack speaks — a specification, not a black box. GRASP's `cite.verify` is pinned byte-compatible to the HAPPI `cite.verify` verb (happi/1.3). | **Apache-2.0** -- open standard ([happi.md](https://happi.md)), with its SDKs and conformance suite |
-| **GRIP + HAL** | The reasoning + provenance engine (GRIP) and the LLM-agnostic multi-provider substrate (HAL). Not required to produce *or* verify a GRASP record. | Licensed / private |
+| **GRIP + HAL** | The reasoning + provenance engine (GRIP) and the LLM-agnostic multi-provider substrate (HAL). Not required to produce *or* verify a GRASP record. | **AGPL-3.0** -- open ([GRIP](https://github.com/grip-platform/GRIP), [HAL](https://github.com/grip-platform/HAL)) |
 
 The load-bearing consequence for anyone relying on a record: **GRASP records are
 produced and re-verified by this open package alone** — no GRIP runtime, no HAL,
@@ -124,7 +122,7 @@ record; only signatures and a short key fingerprint do). Asymmetric signing is
 now first-class: **Ed25519**, post-quantum **ML-DSA-65** (FIPS 204), and the
 dual `ed25519+ml-dsa-65` hybrid, selected via `GRASP_SIGNING_SCHEME` — the
 default is `ed25519` when the optional `cryptography` package is installed
-(`pip install grasp-provenance[pqc]`), else HMAC-SHA256. `grasp keygen`
+(`pip install "grasp-provenance[pqc] @ git+https://github.com/CodeTonight-SA/grasp"`), else HMAC-SHA256. `grasp keygen`
 generates keypairs and prints the public key + fingerprint for publication; the
 verifier resolves verification keys from `GRASP_*_PUB`, `GRASP_VERIFY_KEYS`, or
 `<home>/keys/<scheme>.pub`, and marks schemes it cannot check as `DEGRADED` —
